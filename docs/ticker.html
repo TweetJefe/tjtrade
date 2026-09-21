@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>TJTrade Ticker & Chart</title>
+    <!-- Подключаем библиотеку графиков -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #121212; color: #fff; margin: 0; }
+        .ticker-box { text-align: center; background: #1e1e1e; padding: 40px; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); width: 600px; }
+        .symbol { font-size: 24px; color: #888; font-weight: 600; letter-spacing: 2px;}
+        .price { font-size: 64px; font-weight: bold; margin: 10px 0; color: #00ff88; transition: color 0.2s; }
+        .status { font-size: 14px; color: #aaa; margin-bottom: 30px; }
+        .chart-container { position: relative; height: 250px; width: 100%; }
+    </style>
+</head>
+<body>
+<div class="ticker-box">
+    <div class="symbol">BTC/USD</div>
+    <div class="price" id="priceDisplay">--.--</div>
+    <div class="status" id="statusDisplay">Connecting to Market Data...</div>
+
+    <!-- Место под наш график -->
+    <div class="chart-container">
+        <canvas id="priceChart"></canvas>
+    </div>
+</div>
+
+<script>
+    // --- 1. Настройка графика (Chart.js) ---
+    const ctx = document.getElementById('priceChart').getContext('2d');
+    const priceChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: [], // Здесь будет время сделок
+            datasets: [{
+                label: 'Price',
+                data: [], // Здесь будет цена
+                borderColor: '#00ff88', // Неоново-зеленая линия
+                backgroundColor: 'rgba(0, 255, 136, 0.1)', // Заливка под линией
+                borderWidth: 3,
+                tension: 0.4, // Делает линию плавной
+                fill: true,
+                pointRadius: 4,
+                pointBackgroundColor: '#fff'
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } }, // Прячем легенду
+            scales: {
+                x: { display: true, ticks: { color: '#888' }, grid: { color: '#333' } },
+                y: { display: true, ticks: { color: '#888' }, grid: { color: '#333' } }
+            }
+        }
+    });
+
+    // --- 2. Подключение к нашему SSE-серверу ---
+    const eventSource = new EventSource('http://localhost:8085/api/v1/ticker/stream/BTC_USD');
+    const priceDisplay = document.getElementById('priceDisplay');
+    const statusDisplay = document.getElementById('statusDisplay');
+
+    eventSource.onopen = () => {
+        statusDisplay.innerText = "Connected! Waiting for trades...";
+        statusDisplay.style.color = "#00ff88";
+    };
+
+    // --- 3. Слушаем сделки и рисуем на графике ---
+    eventSource.addEventListener('price-update', (event) => {
+        const price = parseFloat(event.data);
+
+        // 3.1 Обновляем большую цифру
+        priceDisplay.innerText = "$" + price.toFixed(2);
+        priceDisplay.style.color = "#ffffff";
+        setTimeout(() => priceDisplay.style.color = "#00ff88", 200);
+
+        // 3.2 Добавляем данные на график
+        const now = new Date();
+        const timeString = now.getHours().toString().padStart(2, '0') + ':' +
+            now.getMinutes().toString().padStart(2, '0') + ':' +
+            now.getSeconds().toString().padStart(2, '0');
+
+        priceChart.data.labels.push(timeString);
+        priceChart.data.datasets[0].data.push(price);
+
+        // 3.3 Если точек больше 15, удаляем самую старую (движение графика)
+        if (priceChart.data.labels.length > 15) {
+            priceChart.data.labels.shift();
+            priceChart.data.datasets[0].data.shift();
+        }
+
+        // Заставляем график перерисоваться
+        priceChart.update();
+    });
+
+    eventSource.onerror = () => {
+        statusDisplay.innerText = "Connection lost. Reconnecting...";
+        statusDisplay.style.color = "#ff4444";
+    };
+</script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+server:
+  port: 8084
+grpc:
+  server:
+    port: 9095
+spring:
+  main:
+    allow-bean-definition-overriding: true
+  application:
+    name: portfolio-ledger-service
+  datasource:
+    url: jdbc:postgresql://localhost:5435/tjtrade_db
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+  liquibase:
+    change-log: classpath:db/changelog/db.changelog-master.xml
+    enabled: true
+
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: portfolio-ledger-group
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: com.tj.common.event

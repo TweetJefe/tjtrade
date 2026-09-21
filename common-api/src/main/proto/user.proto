@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "com.tj.common.grpc";
+option java_outer_classname = "UserProto";
+
+service UserService{
+  rpc CheckUserExists(CheckUserRequest) returns (CheckUserResponse);
+}
+
+message CheckUserRequest {
+  string userId = 1;
+}
+
+message CheckUserResponse {
+  bool exists = 1;
+  string status = 2;
+}

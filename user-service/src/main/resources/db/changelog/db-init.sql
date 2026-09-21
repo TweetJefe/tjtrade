@@ -1,0 +1,26 @@
+--liquibase formatted sql
+
+--changeset tjtrade:1
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email VARCHAR(255) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'ACTIVE',
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+--changeset tjtrade:2
+CREATE TABLE IF NOT EXISTS accounts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    currency VARCHAR(10) NOT NULL,
+    balance NUMERIC(18, 8) NOT NULL DEFAULT 0.00000000,
+    reserved_balance NUMERIC(18, 8) NOT NULL DEFAULT 0.00000000,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_user_currency UNIQUE (user_id, currency)
+);
+
+--changeset tjtrade:3
+ALTER TABLE users ADD COLUMN username VARCHAR(255);

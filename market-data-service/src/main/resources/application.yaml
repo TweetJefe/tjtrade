@@ -1,0 +1,26 @@
+server:
+  port: 8085
+grpc:
+  server:
+    port: 9094
+spring:
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: jdbc:postgresql://localhost:5435/tjtrade_db
+    username: postgres
+    password: postgres
+  liquibase:
+    enabled: false
+  application:
+    name: market-data-service
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: market-data-group
+      auto-offset-reset: latest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+    properties:
+      spring.json.trusted.packages: "*"

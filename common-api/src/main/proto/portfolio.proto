@@ -1,0 +1,17 @@
+syntax = "proto3";
+option java_multiple_files = true;
+option java_package = "com.tj.common.grpc";
+option java_outer_classname = "PortfolioProto";
+service PortfolioService {
+  rpc LockFunds(LockFundsRequest) returns (LockFundsResponse);
+}
+message LockFundsRequest {
+  string userId = 1;
+  string asset = 2;
+  string amount = 3;
+  string orderId = 4;
+}
+message LockFundsResponse {
+  bool success = 1;
+  string message = 2;
+}
