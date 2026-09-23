@@ -8,8 +8,6 @@ import java.util.UUID;
 
 public interface UserService {
 
-    UserDTO createUser(UserRegisterRequest request);
-
     UserDTO getUserById(UUID id);
 
     void deleteUser(UUID id);

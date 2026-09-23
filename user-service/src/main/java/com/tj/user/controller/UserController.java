@@ -23,12 +23,6 @@ public class UserController {
     private final UserService userService;
     private final AccountService accountService;
 
-    @PostMapping("")
-    public ResponseEntity<UserDTO> createUser(
-            @RequestBody UserRegisterRequest request){
-        return ResponseEntity.status(HttpStatus.CREATED).body(userService.createUser(request));
-    }
-
     @GetMapping("/{id}")
     public ResponseEntity<UserDTO> getUserById(
             @PathVariable UUID id){
