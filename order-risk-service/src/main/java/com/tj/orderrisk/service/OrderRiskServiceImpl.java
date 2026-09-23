@@ -22,12 +22,18 @@ import java.util.UUID;
 public class OrderRiskServiceImpl implements OrderRiskService {
 
     private final RedisTemplate<String, Object> redisTemplate;
+    private final DefaultRedisScript<Long> rateLimitScript;
     private final DefaultRedisScript<Long> reserveScript;
     private final OrderRiskKafkaProducer orderRiskKafkaProducer;
     private final UserServiceGrpcClient userClient;
     private final PortfolioServiceGrpcClient portfolioClient;
 
-    public OrderRiskServiceImpl(RedisTemplate<String, Object> redisTemplate, OrderRiskKafkaProducer orderRiskKafkaProducer, UserServiceGrpcClient userClient, PortfolioServiceGrpcClient portfolioClient) {
+    public OrderRiskServiceImpl(
+            RedisTemplate<String,
+            Object> redisTemplate,
+            OrderRiskKafkaProducer orderRiskKafkaProducer,
+            UserServiceGrpcClient userClient,
+            PortfolioServiceGrpcClient portfolioClient) {
         this.redisTemplate = redisTemplate;
         this.reserveScript = new DefaultRedisScript<>();
         this.orderRiskKafkaProducer = orderRiskKafkaProducer;
@@ -35,10 +41,27 @@ public class OrderRiskServiceImpl implements OrderRiskService {
         this.reserveScript.setResultType(Long.class);
         this.userClient = userClient;
         this.portfolioClient = portfolioClient;
+        this.rateLimitScript = new DefaultRedisScript<>();
+        this.rateLimitScript.setLocation(new ClassPathResource("luascripts/rate_limit.lua"));
+        this.rateLimitScript.setResultType(Long.class);
     }
 
     @Override
     public RiskCheckResponse validateOrderRisk(RiskCheckRequest request) {
+
+        String rateLimitKey = "rate_limit:user:" + request.getUserId();
+
+        Long allowed = redisTemplate.execute(rateLimitScript, List.of(rateLimitKey), "5", "1");
+
+        if (allowed != null && allowed != 0L){
+            log.warn("Rate limit exceeded for user {}", request.getUserId());
+            return RiskCheckResponse.builder()
+                    .approved(false)
+                    .rejectReason("Rate limit exceeded. Maximum 5 orders per second.")
+                    .build();
+        }
+
+
 
 //        boolean userExists = grpcClient.checkUserExists(request.getUserId());
 //
