@@ -1,0 +1,30 @@
+server:
+  port: 8080
+
+spring:
+  main:
+    web-application-type: reactive
+    allow-bean-definition-overriding: true
+  application:
+    name: api-gateway
+  cloud:
+    gateway:
+      routes:
+        - id: user-auth-route
+          uri: http://localhost:8081
+          predicates:
+            - Path=/api/v1/auth/**
+        - id: user-service-protected
+          uri: http://localhost:8081
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 1
+                redis-rate-limiter.burstCapacity: 3
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: "#{@ipKeyResolver}"
+          predicates:
+            - Path=/api/v1/user/**, /api/v1/accounts/**
+jwt:
+  secret: ${JWTSECRET}
+  expiration: 86400000

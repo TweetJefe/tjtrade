@@ -22,6 +22,7 @@
         <module>matching-engine-service</module>
         <module>portfolio-ledger-service</module>
         <module>market-data-service</module>
+        <module>api-gateway</module>
     </modules>
     <url/>
     <licenses>
