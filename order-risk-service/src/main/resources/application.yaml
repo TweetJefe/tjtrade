@@ -1,37 +1,35 @@
-grpc:
-  server:
-    port: 9093
-  client:
-    user-service-grpc:
-      address: 'static://localhost:9091'
-      negotiation-type: plaintext
-    portfolio-ledger-service-grpc:
-      address: 'static://localhost:9095'
-      negotiation-type: plaintext
+server:
+  port: ${SERVER_PORT:8082}
+
 spring:
+  grpc:
+    client:
+      channel:
+        user-service:
+          target: ${USER_GRPC_TARGET:static://localhost:9090}
+          ssl:
+            enabled: false
+        portfolio-ledger-service:
+          target: ${PORTFOLIO_GRPC_TARGET:static://localhost:9095}
+          ssl:
+            enabled: false
   threads:
     virtual:
       enabled: true
   application:
     name: order-risk-service
-  liquibase:
-    enabled: false
-  datasource:
-    url: jdbc:postgresql://localhost:5435/tjtrade_db
-    username: postgres
-    password: postgres
   data:
     redis:
       host: localhost
       port: 6379
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
     consumer:
       group-id: order-risk-service-group
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
       properties:
         spring.json.trusted.packages: com.tj.common.event

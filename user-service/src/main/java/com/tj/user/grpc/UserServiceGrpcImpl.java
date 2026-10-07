@@ -6,7 +6,7 @@ import com.tj.common.grpc.UserServiceGrpc;
 import com.tj.user.repository.UserRepository;
 import io.grpc.stub.StreamObserver;
 import lombok.RequiredArgsConstructor;
-import net.devh.boot.grpc.server.service.GrpcService;
+import org.springframework.grpc.server.service.GrpcService;
 import java.util.UUID;
 
 @GrpcService

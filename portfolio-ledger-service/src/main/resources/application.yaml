@@ -1,11 +1,9 @@
 server:
   port: 8084
-grpc:
-  server:
-    port: 9095
 spring:
-  main:
-    allow-bean-definition-overriding: true
+  grpc:
+    server:
+      port: ${GRPC_PORT:9095}
   application:
     name: portfolio-ledger-service
   datasource:
@@ -15,13 +13,13 @@ spring:
     driver-class-name: org.postgresql.Driver
   liquibase:
     change-log: classpath:db/changelog/db.changelog-master.xml
-    enabled: true
+    enabled: false
 
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     consumer:
       group-id: portfolio-ledger-group
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
       properties:
         spring.json.trusted.packages: com.tj.common.event
