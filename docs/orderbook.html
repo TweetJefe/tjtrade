@@ -68,7 +68,6 @@
             document.getElementById('disconnectBtn').disabled = false;
             logMsg("Connected: " + frame);
 
-            // ИСПРАВЛЕНО: добавили /BTC_USD в путь подписки
             stompClient.subscribe('/topic/orderbook/BTC_USD', function (message) {
                 logMsg(message.body);
                 updateOrderbook(JSON.parse(message.body));
@@ -98,14 +97,12 @@
 
         if (data.asks) {
             data.asks.forEach(ask => {
-                // ИСПРАВЛЕНО: ask.volume заменен на ask.quantity
                 asksBody.innerHTML += `<tr><td class="ask">${ask.price}</td><td>${ask.quantity}</td></tr>`;
             });
         }
 
         if (data.bids) {
             data.bids.forEach(bid => {
-                // ИСПРАВЛЕНО: bid.volume заменен на bid.quantity
                 bidsBody.innerHTML += `<tr><td class="bid">${bid.price}</td><td>${bid.quantity}</td></tr>`;
             });
         }

@@ -1,0 +1,2 @@
+06416e11d4898f74237ae695be537d90e109095c5060e8223dfb6c071c233410  user-service/src/main/resources/db/changelog/db-init.sql
+c93021793cf6b3a081b1b0502e69be0c982ebbaeff24b38cf5c8c02a356f59bd  portfolio-ledger-service/src/main/resources/db/changelog/init-db.sql
