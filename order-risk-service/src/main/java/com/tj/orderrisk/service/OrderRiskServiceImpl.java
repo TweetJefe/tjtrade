@@ -42,7 +42,7 @@ public class OrderRiskServiceImpl implements OrderRiskService {
         this.userClient = userClient;
         this.portfolioClient = portfolioClient;
         this.rateLimitScript = new DefaultRedisScript<>();
-        this.rateLimitScript.setLocation(new ClassPathResource("luascripts/rate_limit.lua"));
+        this.rateLimitScript.setLocation(new ClassPathResource("luascripts/rate-limiter.lua"));
         this.rateLimitScript.setResultType(Long.class);
     }
 
@@ -53,7 +53,11 @@ public class OrderRiskServiceImpl implements OrderRiskService {
 
         Long allowed = redisTemplate.execute(rateLimitScript, List.of(rateLimitKey), "5", "1");
 
-        if (allowed != null && allowed != 0L){
+        if (allowed == null || (allowed != 0L && allowed != 1L)) {
+            throw new IllegalStateException("Rate limiter returned an unexpected result: " + allowed);
+        }
+
+        if (allowed == 0L) {
             log.warn("Rate limit exceeded for user {}", request.getUserId());
             return RiskCheckResponse.builder()
                     .approved(false)
