@@ -17,28 +17,6 @@ import java.util.UUID;
 public class UserServiceImpl implements UserService {
     private final UserRepository userRepository;
 
-
-    @Override
-    public UserDTO createUser(UserRegisterRequest request) {
-        if (userRepository.existsByEmail(request.getEmail())){
-            throw new IllegalArgumentException("There is an account attached to this email");
-        }
-
-        if (userRepository.existsByUsername(request.getUsername())){
-            throw new IllegalArgumentException("That username is taken!");
-        }
-
-        var savedUser = userRepository.createUser(request);
-
-        return new UserDTO(
-                savedUser.getId(),
-                savedUser.getEmail(),
-                savedUser.getUsername(),
-                savedUser.getStatus(),
-                savedUser.getCreatedAt()
-        );
-    }
-
     @Override
     public UserDTO getUserById(UUID id) {
         var user = userRepository.findById(id)

@@ -4,7 +4,6 @@ import com.tj.user.exception.AccountNotFoundException;
 import com.tj.user.exception.InsufficientFundsException;
 import com.tj.user.jooq.tables.records.AccountsRecord;
 import com.tj.user.model.Account;
-import io.lettuce.core.BitFieldArgs;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;

@@ -23,4 +23,4 @@ CREATE TABLE IF NOT EXISTS accounts (
 );
 
 --changeset tjtrade:3
-ALTER TABLE users ADD COLUMN username VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(255);

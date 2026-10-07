@@ -5,10 +5,11 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
-@Builder
-public class AuthResponse {
-    private String token;
+import java.util.UUID;
+
+
+public record AuthResponse(
+        String token,
+        UUID userId
+) {
 }

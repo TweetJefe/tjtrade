@@ -1,13 +1,11 @@
 server:
   port: 8081
 
-grpc:
-  server:
-    port: 9090
 
 spring:
-  main:
-    allow-bean-definition-overriding: true
+  grpc:
+    server:
+      port: ${GRPC_PORT:9090}
   application:
     name: user-service
   datasource:
@@ -17,15 +15,18 @@ spring:
     driver-class-name: org.postgresql.Driver
   liquibase:
     change-log: classpath:db/changelog/db.changelog-master.xml
-    enabled: true
+    enabled: false
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
     consumer:
       group-id: user-service-group
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
       properties:
         spring.json.trusted.packages: com.tj.common.event
+jwt:
+  secret: ${JWTSECRET}
+  expiration: 86400000

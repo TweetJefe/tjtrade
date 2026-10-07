@@ -1,6 +1,5 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+<?xml version='1.0' encoding='UTF-8'?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
         <groupId>com.tj</groupId>
@@ -9,9 +8,6 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
     <artifactId>portfolio-ledger-service</artifactId>
-    <name>portfolio-ledger-service</name>
-    <description>portfolio-ledger-service</description>
-
     <dependencies>
         <dependency>
             <groupId>com.tj</groupId>
@@ -28,72 +24,69 @@
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-liquibase</artifactId>
+            <artifactId>spring-boot-starter-kafka</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.postgresql</groupId>
-            <artifactId>postgresql</artifactId>
-            <scope>runtime</scope>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-grpc-server</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
             <optional>true</optional>
         </dependency>
-        
-        <!-- Fix for Spring Kafka looking for Jackson 2 classes -->
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-            <version>2.15.2</version>
-        </dependency>
-
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
     </dependencies>
-
     <build>
         <plugins>
             <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
-            </plugin>
-            <plugin>
-                <groupId>org.liquibase</groupId>
-                <artifactId>liquibase-maven-plugin</artifactId>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.2.0</version>
                 <executions>
                     <execution>
-                        <id>liquibase-update</id>
+                        <id>assemble-codegen-ddl</id>
                         <phase>generate-sources</phase>
                         <goals>
-                            <goal>update</goal>
+                            <goal>run</goal>
                         </goals>
+                        <configuration>
+                            <target>
+                                <mkdir dir="${project.build.directory}"/>
+                                <concat destfile="${project.build.directory}/schema.sql" fixlastline="yes">
+                                    <filelist dir="${project.basedir}">
+                                        <file name="../user-service/src/main/resources/db/changelog/db-init.sql"/>
+                                        <file name="src/main/resources/db/changelog/init-db.sql"/>
+                                    </filelist>
+                                </concat>
+                            </target>
+                        </configuration>
                     </execution>
                 </executions>
-                <dependencies>
-                    <dependency>
-                        <groupId>org.postgresql</groupId>
-                        <artifactId>postgresql</artifactId>
-                        <version>${postgresql.version}</version>
-                    </dependency>
-                </dependencies>
-                <configuration>
-                    <changeLogFile>src/main/resources/db/changelog/db.changelog-master.xml</changeLogFile>
-                    <driver>org.postgresql.Driver</driver>
-                    <url>jdbc:postgresql://localhost:5435/tjtrade_db</url>
-                    <username>postgres</username>
-                    <password>postgres</password>
-                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
             </plugin>
             <plugin>
                 <groupId>org.jooq</groupId>
                 <artifactId>jooq-codegen-maven</artifactId>
                 <executions>
                     <execution>
-                        <id>jooq-codegen</id>
+                        <id>ddl-codegen</id>
                         <phase>generate-sources</phase>
                         <goals>
                             <goal>generate</goal>
@@ -102,23 +95,34 @@
                 </executions>
                 <dependencies>
                     <dependency>
-                        <groupId>org.postgresql</groupId>
-                        <artifactId>postgresql</artifactId>
-                        <version>${postgresql.version}</version>
+                        <groupId>org.jooq</groupId>
+                        <artifactId>jooq-meta-extensions</artifactId>
+                        <version>${jooq.version}</version>
                     </dependency>
                 </dependencies>
                 <configuration>
-                    <jdbc>
-                        <driver>org.postgresql.Driver</driver>
-                        <url>jdbc:postgresql://localhost:5435/tjtrade_db</url>
-                        <user>postgres</user>
-                        <password>postgres</password>
-                    </jdbc>
                     <generator>
                         <database>
-                            <name>org.jooq.meta.postgres.PostgresDatabase</name>
-                            <inputSchema>public</inputSchema>
+                            <name>org.jooq.meta.extensions.ddl.DDLDatabase</name>
                             <includes>orders|trades|wallet_balances</includes>
+                            <properties>
+                                <property>
+                                    <key>scripts</key>
+                                    <value>${project.build.directory}/schema.sql</value>
+                                </property>
+                                <property>
+                                    <key>sort</key>
+                                    <value>none</value>
+                                </property>
+                                <property>
+                                    <key>parseDialect</key>
+                                    <value>POSTGRES</value>
+                                </property>
+                                <property>
+                                    <key>defaultNameCase</key>
+                                    <value>lower</value>
+                                </property>
+                            </properties>
                         </database>
                         <target>
                             <packageName>com.tj.portfolioledger.jooq</packageName>
@@ -129,5 +133,60 @@
             </plugin>
         </plugins>
     </build>
-
+    <profiles>
+        <profile>
+            <id>migrate</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-enforcer-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>migration-endpoint-required</id>
+                                <goals>
+                                    <goal>enforce</goal>
+                                </goals>
+                                <configuration>
+                                    <rules>
+                                        <requireProperty>
+                                            <property>env.TJTRADE_MIGRATION_URL</property>
+                                            <regex>jdbc:postgresql://.+</regex>
+                                            <message>Set TJTRADE_MIGRATION_URL explicitly for the separate deployment migration step.</message>
+                                        </requireProperty>
+                                        <requireProperty>
+                                            <property>env.TJTRADE_MIGRATION_USER</property>
+                                            <regex>.+</regex>
+                                        </requireProperty>
+                                        <requireProperty>
+                                            <property>env.TJTRADE_MIGRATION_PASSWORD</property>
+                                            <regex>.+</regex>
+                                        </requireProperty>
+                                    </rules>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.liquibase</groupId>
+                        <artifactId>liquibase-maven-plugin</artifactId>
+                        <dependencies>
+                            <dependency>
+                                <groupId>org.postgresql</groupId>
+                                <artifactId>postgresql</artifactId>
+                                <version>${postgresql.version}</version>
+                            </dependency>
+                        </dependencies>
+                        <configuration>
+                            <changeLogFile>src/main/resources/db/changelog/db.changelog-master.xml</changeLogFile>
+                            <driver>org.postgresql.Driver</driver>
+                            <url>${env.TJTRADE_MIGRATION_URL}</url>
+                            <username>${env.TJTRADE_MIGRATION_USER}</username>
+                            <password>${env.TJTRADE_MIGRATION_PASSWORD}</password>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

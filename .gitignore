@@ -35,3 +35,16 @@ build/
 ### Docs ###
 /docs/*
 !/docs/*.html
+!/docs/*.md
+!/docs/migration-checksums.sha256
+/docs/codstyle.md
+
+### Local secrets ###
+.env
+.env.*
+!.env.example
+*.key
+*.p12
+*.pfx
+application-local.yaml
+!integration-tests/src/test/resources/tls/server.key

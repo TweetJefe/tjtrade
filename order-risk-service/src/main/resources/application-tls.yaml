@@ -1,0 +1,18 @@
+spring:
+  ssl:
+    bundle:
+      pem:
+        grpc-trust:
+          truststore:
+            certificate: ${GRPC_TLS_CA}
+  grpc:
+    client:
+      channel:
+        user-service:
+          ssl:
+            enabled: true
+            bundle: grpc-trust
+        portfolio-ledger-service:
+          ssl:
+            enabled: true
+            bundle: grpc-trust
