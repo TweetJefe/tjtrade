@@ -5,6 +5,8 @@ import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -16,21 +18,11 @@ public class WalletBalanceRepository {
 
     private final DSLContext dsl;
 
-    public void initCheatBalanceIfNeeded(UUID userId, String asset) {
-        dsl.insertInto(WALLET_BALANCES)
-                .set(WALLET_BALANCES.USER_ID, userId)
-                .set(WALLET_BALANCES.CURRENCY, asset)
-                .set(WALLET_BALANCES.AVAILABLE, new BigDecimal("1000000"))
-                .set(WALLET_BALANCES.LOCKED, BigDecimal.ZERO)
-                .onConflict(WALLET_BALANCES.USER_ID, WALLET_BALANCES.CURRENCY)
-                .doNothing()
-                .execute();
-    }
-
     public Optional<BigDecimal> lockFunds(UUID userId, String asset, BigDecimal amountToLock) {
         var record = dsl.update(WALLET_BALANCES)
                 .set(WALLET_BALANCES.AVAILABLE, WALLET_BALANCES.AVAILABLE.minus(amountToLock))
                 .set(WALLET_BALANCES.LOCKED, WALLET_BALANCES.LOCKED.plus(amountToLock))
+                .set(WALLET_BALANCES.UPDATED_AT, OffsetDateTime.now(ZoneOffset.UTC))
                 .where(WALLET_BALANCES.USER_ID.eq(userId))
                 .and(WALLET_BALANCES.CURRENCY.eq(asset))
                 .and(WALLET_BALANCES.AVAILABLE.ge(amountToLock))
