@@ -23,3 +23,7 @@ spring:
       value-deserializer: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
       properties:
         spring.json.trusted.packages: com.tj.common.event
+
+tjtrade:
+  trading:
+    symbols: BTC_USDT,ETH_USDT

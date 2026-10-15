@@ -14,6 +14,7 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static com.tj.portfolioledger.jooq.Tables.ORDERS;
@@ -79,5 +80,25 @@ public class OrderRepository {
                 .execute();
 
         return insertedRows == 1;
+    }
+
+    public Optional<Order> findByOrderIdForUpdate(UUID orderId) {
+        return dsl.selectFrom(ORDERS)
+                .where(ORDERS.ID.eq(orderId))
+                .forUpdate()
+                .fetchOptional()
+                .map(record -> Order.builder()
+                        .id(record.getId())
+                        .userId(record.getUserId())
+                        .symbol(record.getSymbol())
+                        .side(OrderSide.valueOf(record.getSide()))
+                        .type(OrderType.valueOf(record.getType()))
+                        .price(record.getPrice())
+                        .quantity(record.getQuantity())
+                        .filledQuantity(record.getFilledQuantity())
+                        .status(OrderStatus.valueOf(record.getStatus()))
+                        .createdAt(record.getCreatedAt().toInstant())
+                        .updatedAt(record.getUpdatedAt().toInstant())
+                        .build());
     }
 }
