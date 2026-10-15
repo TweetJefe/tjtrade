@@ -10,11 +10,6 @@
     <artifactId>integration-tests</artifactId>
     <dependencies>
         <dependency>
-            <groupId>org.springframework</groupId>
-            <artifactId>spring-jdbc</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
             <groupId>org.jooq</groupId>
             <artifactId>jooq</artifactId>
             <scope>test</scope>
@@ -159,7 +154,7 @@
                 <configuration>
                     <failIfNoTests>true</failIfNoTests>
                     <systemPropertyVariables>
-                        <project.root>${maven.multiModuleProjectDirectory}</project.root>
+                        <project.root>${project.basedir}/..</project.root>
                         <project.version>${project.version}</project.version>
                         <postgres.image>${postgres.image}</postgres.image>
                         <redis.image>${redis.image}</redis.image>
