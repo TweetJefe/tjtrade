@@ -4,16 +4,15 @@ import com.tj.common.dto.OrderDTO;
 import com.tj.common.enums.OrderSide;
 import com.tj.common.enums.OrderStatus;
 import com.tj.common.enums.OrderType;
-import com.tj.portfolioledger.command.ReserveFundsCommand;
 import com.tj.portfolioledger.model.Order;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
-import org.jooq.Select;
 import org.springframework.stereotype.Repository;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static com.tj.portfolioledger.jooq.Tables.ORDERS;
@@ -79,5 +78,25 @@ public class OrderRepository {
                 .execute();
 
         return insertedRows == 1;
+    }
+
+    public Optional<Order> findByOrderIdForUpdate(UUID orderId) {
+        return dsl.selectFrom(ORDERS)
+                .where(ORDERS.ID.eq(orderId))
+                .forUpdate()
+                .fetchOptional()
+                .map(record -> Order.builder()
+                        .id(record.getId())
+                        .userId(record.getUserId())
+                        .symbol(record.getSymbol())
+                        .side(OrderSide.valueOf(record.getSide()))
+                        .type(OrderType.valueOf(record.getType()))
+                        .price(record.getPrice())
+                        .quantity(record.getQuantity())
+                        .filledQuantity(record.getFilledQuantity())
+                        .status(OrderStatus.valueOf(record.getStatus()))
+                        .createdAt(record.getCreatedAt().toInstant())
+                        .updatedAt(record.getUpdatedAt().toInstant())
+                        .build());
     }
 }
