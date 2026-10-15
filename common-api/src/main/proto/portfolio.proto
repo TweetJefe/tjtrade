@@ -4,6 +4,8 @@ option java_package = "com.tj.common.grpc";
 option java_outer_classname = "PortfolioProto";
 service PortfolioService {
   rpc LockFunds(LockFundsRequest) returns (LockFundsResponse);
+
+  rpc AcceptOrder(AcceptOrderRequest) returns (AcceptOrderResponse);
 }
 message LockFundsRequest {
   string userId = 1;
@@ -14,4 +16,35 @@ message LockFundsRequest {
 message LockFundsResponse {
   bool success = 1;
   string message = 2;
+}
+message AcceptOrderRequest{
+  enum Side {
+    SIDE_UNSPECIFIED = 0;
+    BUY = 1;
+    SELL = 2;
+  }
+
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    LIMIT = 1;
+    MARKET = 2;
+  }
+
+  string order_id = 1;
+  string user_id = 2;
+  string symbol = 3;
+  Side side = 4;
+  Type type = 5;
+  string price = 6;
+  string quantity = 7;
+}
+message AcceptOrderResponse{
+  enum Outcome {
+    OUTCOME_UNSPECIFIED = 0;
+    ACCEPTED = 1;
+    ALREADY_ACCEPTED = 2;
+  }
+
+  string order_id = 1;
+  Outcome outcome = 2;
 }
