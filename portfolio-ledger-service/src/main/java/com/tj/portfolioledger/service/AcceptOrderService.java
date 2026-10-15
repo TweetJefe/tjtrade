@@ -6,6 +6,7 @@ import com.tj.portfolioledger.command.AcceptOrderCommand;
 import com.tj.portfolioledger.command.ReserveFundsCommand;
 import com.tj.portfolioledger.enums.AcceptOrderOutcome;
 import com.tj.portfolioledger.exception.AcceptOrderException;
+import com.tj.portfolioledger.messaging.outbox.OutboxWriter;
 import com.tj.portfolioledger.model.Order;
 import com.tj.portfolioledger.repository.FundReservationRepository;
 import com.tj.portfolioledger.repository.OrderRepository;
@@ -30,12 +31,14 @@ public class AcceptOrderService {
     private final OrderRepository orderRepository;
     private final FundReservationRepository reservationRepository;
     private final ReserveFundsService reserveFundsService;
+    private final OutboxWriter outboxWriter;
     private final Set<String> supportedSymbols;
 
     public AcceptOrderService(
             OrderRepository orderRepository,
             FundReservationRepository reservationRepository,
             ReserveFundsService reserveFundsService,
+            OutboxWriter outboxWriter,
             @Value("${tjtrade.trading.symbols}") List<String> supportedSymbols
     ) {
         if (supportedSymbols == null || supportedSymbols.isEmpty()) {
@@ -47,6 +50,7 @@ public class AcceptOrderService {
         this.orderRepository = orderRepository;
         this.reservationRepository = reservationRepository;
         this.reserveFundsService = reserveFundsService;
+        this.outboxWriter = outboxWriter;
         this.supportedSymbols = Set.copyOf(supportedSymbols);
     }
 
@@ -77,6 +81,10 @@ public class AcceptOrderService {
         }
 
         reserveFundsService.reserveFunds(reservation);
+
+        Order persistedOrder = orderRepository.findByOrderIdForUpdate(command.orderId())
+                .orElseThrow(() -> new IllegalStateException("Accepted order was not found"));
+        outboxWriter.appendOrderPlaced(persistedOrder);
 
         return new AcceptOrderResult(command.orderId(), AcceptOrderOutcome.ACCEPTED);
     }
@@ -119,6 +127,8 @@ public class AcceptOrderService {
                     "Existing order has inconsistent reservation parameters"
             );
         }
+
+        outboxWriter.requireOrderPlaced(existing);
 
         return new AcceptOrderResult(command.orderId(), AcceptOrderOutcome.ALREADY_ACCEPTED);
     }

@@ -3,6 +3,11 @@ package com.tj.integration;
 import com.tj.common.enums.OrderSide;
 import com.tj.common.enums.OrderStatus;
 import com.tj.common.enums.OrderType;
+import com.tj.common.event.OrderPlacedEvent;
+import com.tj.common.event.TradingMessages;
+import com.tj.portfolioledger.messaging.outbox.OrderPlacedMessageCodec;
+import com.tj.portfolioledger.messaging.outbox.OutboxWriter;
+import com.tj.portfolioledger.repository.OutboxRepository;
 import com.tj.portfolioledger.command.AcceptOrderCommand;
 import com.tj.portfolioledger.command.ReserveFundsCommand;
 import com.tj.portfolioledger.enums.AcceptOrderOutcome;
@@ -108,7 +113,8 @@ class AcceptOrderIT {
         ));
         context.register(TransactionConfiguration.class, OrderRepository.class,
                 FundReservationRepository.class, WalletBalanceRepository.class,
-                ReserveFundsService.class, AcceptOrderService.class);
+                ReserveFundsService.class, OutboxRepository.class,
+                OrderPlacedMessageCodec.class, OutboxWriter.class, AcceptOrderService.class);
         context.refresh();
         service = context.getBean(AcceptOrderService.class);
     }
@@ -178,6 +184,8 @@ class AcceptOrderIT {
         UUID orderId = UUID.randomUUID();
         service.acceptOrder(command(orderId, userId, OrderSide.BUY, "100", "2"));
         Instant createdAt = readOrder(orderId).getCreatedAt();
+        var originalOutbox = outboxRow(orderId);
+        long originalSequence = marketSequence("BTC_USDT");
 
         assertEquals(AcceptOrderOutcome.ALREADY_ACCEPTED,
                 service.acceptOrder(command(orderId, userId, OrderSide.BUY, "100.00", "2.000")).outcome());
@@ -192,6 +200,10 @@ class AcceptOrderIT {
         assertEquals(OrderStatus.FILLED, readOrder(orderId).getStatus());
         assertDecimal("2", readOrder(orderId).getFilledQuantity());
         assertEquals(createdAt, readOrder(orderId).getCreatedAt());
+        var retriedOutbox = outboxRow(orderId);
+        assertEquals(originalOutbox, retriedOutbox);
+        assertEquals(originalSequence, marketSequence("BTC_USDT"));
+        assertOutboxCount(orderId, 1);
         assertWallet(userId, "USDT", "800", "0");
         assertCounts(userId, 1, 1);
     }
@@ -357,6 +369,7 @@ class AcceptOrderIT {
 
         assertEquals(1, outcomes.stream().filter(outcome -> outcome == AcceptOrderOutcome.ACCEPTED).count());
         assertEquals(1, outcomes.stream().filter(outcome -> outcome == AcceptOrderOutcome.ALREADY_ACCEPTED).count());
+        assertOutboxCount(orderId, 1);
         assertCounts(userId, 1, 1);
         assertWallet(userId, "USDT", "800", "200");
     }
@@ -386,6 +399,226 @@ class AcceptOrderIT {
         assertEquals(1, rejected);
         assertCounts(userId, 1, 1);
         assertWallet(userId, "USDT", "400", "600");
+    }
+
+
+    @Test
+    void outboxEnvelopeMatchesPersistedOrderAndCanonicalHash() {
+        UUID userId = createUser();
+        createWallet(userId, "USDT", "1000");
+        UUID orderId = UUID.randomUUID();
+        service.acceptOrder(command(orderId, userId, OrderSide.BUY, "100.00", "2.000"));
+        var stored = outboxRow(orderId);
+        String json = stored.get("payload").toString();
+        var codec = context.getBean(OrderPlacedMessageCodec.class);
+        var message = codec.decode(json);
+        Order order = readOrder(orderId);
+
+        assertEquals(stored.get("event_id"), message.eventId());
+        assertNotEquals(orderId, message.eventId());
+        assertEquals(TradingMessages.MATCHING_COMMANDS, message.stream());
+        assertEquals(TradingMessages.ORDER_PLACED, message.eventType());
+        assertEquals(TradingMessages.SCHEMA_VERSION, message.schemaVersion());
+        assertEquals("BTC_USDT", message.aggregateKey());
+        assertEquals(orderId, message.correlationId());
+        assertEquals(stored.get("sequence"), message.sequence());
+        assertEquals(order.getCreatedAt(), message.occurredAt());
+        assertEquals(orderId, message.payload().orderId());
+        assertEquals(userId, message.payload().userId());
+        assertEquals(order.getSide(), message.payload().side());
+        assertEquals(order.getType(), message.payload().type());
+        assertDecimal("100", message.payload().price());
+        assertDecimal("2", message.payload().quantity());
+        assertNull(stored.get("published_at"));
+        assertEquals(stored.get("payload_hash"), codec.payloadHash(json));
+        assertEquals(codec.encode(message), codec.canonicalize(json));
+        assertTrue(codec.canonicalize(json).contains("\"price\":100,"));
+
+        var differentScale = new TradingMessages.Envelope<>(
+                message.eventId(), message.eventType(), message.schemaVersion(), message.stream(),
+                message.aggregateKey(), message.sequence(), message.correlationId(), message.occurredAt(),
+                new OrderPlacedEvent(orderId, userId, "BTC_USDT", OrderSide.BUY, OrderType.LIMIT,
+                        new BigDecimal("100.00000000"), new BigDecimal("2.00"), order.getCreatedAt())
+        );
+        assertEquals(codec.canonicalize(json), codec.encode(differentScale));
+        assertEquals(codec.payloadHash(json), codec.payloadHash(codec.encode(differentScale)));
+    }
+
+    @Test
+    void marketSequencesAreIndependent() {
+        UUID userId = createUser();
+        createWallet(userId, "USDT", "1000");
+        long btcBefore = marketSequence("BTC_USDT");
+        long ethBefore = marketSequence("ETH_USDT");
+        UUID btcOrderId = UUID.randomUUID();
+        UUID ethOrderId = UUID.randomUUID();
+        service.acceptOrder(command(btcOrderId, userId, OrderSide.BUY, "10", "1"));
+        service.acceptOrder(new AcceptOrderCommand(ethOrderId, userId, "ETH_USDT", OrderSide.BUY,
+                OrderType.LIMIT, BigDecimal.TEN, BigDecimal.ONE));
+
+        assertEquals(btcBefore + 1, outboxRow(btcOrderId).get("sequence"));
+        assertEquals(ethBefore + 1, outboxRow(ethOrderId).get("sequence"));
+        assertEquals(btcBefore + 1, marketSequence("BTC_USDT"));
+        assertEquals(ethBefore + 1, marketSequence("ETH_USDT"));
+    }
+
+    @Test
+    void outboxInsertionFailureRollsBackFundsOrderReservationAndSequence() {
+        UUID userId = createUser();
+        createWallet(userId, "USDT", "1000");
+        UUID orderId = UUID.randomUUID();
+        long sequenceBefore = marketSequence("BTC_USDT");
+        String constraint = "test_outbox_rejection_" + orderId.toString().replace("-", "");
+        jdbc.execute("alter table outbox_event add constraint " + constraint
+                + " check (correlation_id <> '" + orderId + "'::uuid)");
+
+        try {
+            assertThrows(org.jooq.exception.DataAccessException.class,
+                    () -> service.acceptOrder(command(orderId, userId, OrderSide.BUY, "100", "2")));
+        } finally {
+            jdbc.execute("alter table outbox_event drop constraint " + constraint);
+        }
+
+        assertCounts(userId, 0, 0);
+        assertWallet(userId, "USDT", "1000", "0");
+        assertOutboxCount(orderId, 0);
+        assertEquals(sequenceBefore, marketSequence("BTC_USDT"));
+        assertEquals(AcceptOrderOutcome.ACCEPTED,
+                service.acceptOrder(command(orderId, userId, OrderSide.BUY, "100", "2")).outcome());
+        assertEquals(sequenceBefore + 1, outboxRow(orderId).get("sequence"));
+    }
+
+    @Test
+    void outerRollbackDiscardsSuccessfulAcceptanceAndItsOutbox() {
+        UUID userId = createUser();
+        createWallet(userId, "USDT", "1000");
+        UUID orderId = UUID.randomUUID();
+        long sequenceBefore = marketSequence("BTC_USDT");
+        var transaction = new org.springframework.transaction.support.TransactionTemplate(
+                context.getBean(PlatformTransactionManager.class)
+        );
+        transaction.setIsolationLevel(org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
+        transaction.execute(status -> {
+            assertEquals(AcceptOrderOutcome.ACCEPTED,
+                    service.acceptOrder(command(orderId, userId, OrderSide.BUY, "100", "2")).outcome());
+            status.setRollbackOnly();
+
+            return null;
+        });
+
+        assertCounts(userId, 0, 0);
+        assertWallet(userId, "USDT", "1000", "0");
+        assertOutboxCount(orderId, 0);
+        assertEquals(sequenceBefore, marketSequence("BTC_USDT"));
+    }
+
+    @Test
+    void outboxWriterRequiresAnExistingTransaction() {
+        assertThrows(org.springframework.transaction.IllegalTransactionStateException.class,
+                () -> context.getBean(OutboxWriter.class).appendOrderPlaced(Order.builder().build()));
+    }
+
+    @Test
+    void acceptedOrderWithoutOutboxHistoryIsRejectedInsteadOfRepublished() {
+        UUID userId = createUser();
+        createWallet(userId, "USDT", "1000");
+        UUID orderId = UUID.randomUUID();
+        var command = command(orderId, userId, OrderSide.BUY, "100", "2");
+        service.acceptOrder(command);
+        long sequence = marketSequence("BTC_USDT");
+        jdbc.update("delete from outbox_event where correlation_id = ?", orderId);
+
+        assertEquals(AcceptOrderException.Reason.INCONSISTENT_OUTBOX,
+                assertThrows(AcceptOrderException.class, () -> service.acceptOrder(command)).getReason());
+        assertWallet(userId, "USDT", "800", "200");
+        assertOutboxCount(orderId, 0);
+        assertEquals(sequence, marketSequence("BTC_USDT"));
+    }
+
+    @Test
+    void corruptedOutboxPayloadOrMetadataIsDetectedOnRetry() {
+        UUID userId = createUser();
+        createWallet(userId, "USDT", "1000");
+        UUID orderId = UUID.randomUUID();
+        var command = command(orderId, userId, OrderSide.BUY, "100", "2");
+        service.acceptOrder(command);
+        var original = outboxRow(orderId);
+
+        for (String mutation : List.of(
+                "payload = jsonb_set(payload, '{payload,quantity}', '3'::jsonb)",
+                "payload_hash = '" + "0".repeat(64) + "'",
+                "aggregate_key = 'ETH_USDT'",
+                "schema_version = 2")) {
+            jdbc.update("update outbox_event set " + mutation + " where correlation_id = ?", orderId);
+
+            try {
+                assertEquals(AcceptOrderException.Reason.INCONSISTENT_OUTBOX,
+                        assertThrows(AcceptOrderException.class, () -> service.acceptOrder(command)).getReason());
+            } finally {
+                jdbc.update("update outbox_event set payload = ?::jsonb, payload_hash = ?, aggregate_key = ?, schema_version = ? where correlation_id = ?",
+                        original.get("payload").toString(), original.get("payload_hash"),
+                        original.get("aggregate_key"), original.get("schema_version"), orderId);
+            }
+        }
+
+        assertWallet(userId, "USDT", "800", "200");
+        assertOutboxCount(orderId, 1);
+        assertEquals(AcceptOrderOutcome.ALREADY_ACCEPTED, service.acceptOrder(command).outcome());
+    }
+
+    @Test
+    void concurrentAcceptedOrdersGetContiguousMarketSequences() throws Exception {
+        UUID seedUserId = createUser();
+        createWallet(seedUserId, "USDT", "10");
+        service.acceptOrder(command(UUID.randomUUID(), seedUserId, OrderSide.BUY, "1", "1"));
+
+        UUID firstUserId = createUser();
+        UUID secondUserId = createUser();
+        createWallet(firstUserId, "USDT", "1000");
+        createWallet(secondUserId, "USDT", "1000");
+        UUID firstOrderId = UUID.randomUUID();
+        UUID secondOrderId = UUID.randomUUID();
+        long before = marketSequence("BTC_USDT");
+        var futures = concurrentAcceptances(
+                "select last_sequence from outbox_sequence where stream = 'matching.commands' and aggregate_key = ? for update",
+                "BTC_USDT", List.of(
+                        command(firstOrderId, firstUserId, OrderSide.BUY, "100", "2"),
+                        command(secondOrderId, secondUserId, OrderSide.BUY, "100", "2"))
+        );
+
+        for (var future : futures) {
+            assertEquals(AcceptOrderOutcome.ACCEPTED, future.get(20, TimeUnit.SECONDS).outcome());
+        }
+
+        var sequences = jdbc.queryForList(
+                "select sequence from outbox_event where correlation_id in (?, ?) order by sequence",
+                Long.class, firstOrderId, secondOrderId
+        );
+        assertEquals(List.of(before + 1, before + 2), sequences);
+        assertWallet(firstUserId, "USDT", "800", "200");
+        assertWallet(secondUserId, "USDT", "800", "200");
+        assertCounts(firstUserId, 1, 1);
+        assertCounts(secondUserId, 1, 1);
+    }
+
+
+    private static Map<String, Object> outboxRow(UUID orderId) {
+        return jdbc.queryForMap("select * from outbox_event where correlation_id = ?", orderId);
+    }
+
+    private static void assertOutboxCount(UUID orderId, int expected) {
+        assertEquals(expected, jdbc.queryForObject(
+                "select count(*) from outbox_event where correlation_id = ?", Integer.class, orderId
+        ));
+    }
+
+    private static long marketSequence(String symbol) {
+        var sequences = jdbc.queryForList(
+                "select last_sequence from outbox_sequence where stream = ? and aggregate_key = ?",
+                Long.class, TradingMessages.MATCHING_COMMANDS, symbol
+        );
+
+        return sequences.isEmpty() ? 0 : sequences.getFirst();
     }
 
     private static AcceptOrderCommand command(UUID orderId, UUID userId, OrderSide side, String price, String quantity) {
@@ -444,11 +677,20 @@ class AcceptOrderIT {
     private static List<Future<AcceptOrderResult>> concurrentAcceptances(
             UUID userId, List<AcceptOrderCommand> commands
     ) throws Exception {
+        return concurrentAcceptances(
+                "select user_id from wallet_balances where user_id = ? and currency = 'USDT' for update",
+                userId, commands
+        );
+    }
+
+    private static List<Future<AcceptOrderResult>> concurrentAcceptances(
+            String lockSql, Object lockValue, List<AcceptOrderCommand> commands
+    ) throws Exception {
         try (var connection = dataSource.getConnection(); var executor = Executors.newFixedThreadPool(commands.size())) {
             connection.setAutoCommit(false);
 
-            try (var lock = connection.prepareStatement("select user_id from wallet_balances where user_id = ? and currency = 'USDT' for update")) {
-                lock.setObject(1, userId);
+            try (var lock = connection.prepareStatement(lockSql)) {
+                lock.setObject(1, lockValue);
 
                 try (var result = lock.executeQuery()) {
                     assertTrue(result.next());

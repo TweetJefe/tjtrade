@@ -71,6 +71,7 @@
                                         <file name="../user-service/src/main/resources/db/changelog/db-init.sql"/>
                                         <file name="src/main/resources/db/changelog/init-db.sql"/>
                                         <file name="src/main/resources/db/changelog/fund_reservation.sql"/>
+                                        <file name="src/main/resources/db/changelog/outbox.sql"/>
                                     </filelist>
                                 </concat>
                             </target>
@@ -105,7 +106,13 @@
                     <generator>
                         <database>
                             <name>org.jooq.meta.extensions.ddl.DDLDatabase</name>
-                            <includes>orders|trades|wallet_balances|fund_reservation</includes>
+                            <includes>orders|trades|wallet_balances|fund_reservation|outbox_event|outbox_sequence</includes>
+                            <forcedTypes>
+                                <forcedType>
+                                    <name>JSONB</name>
+                                    <includeExpression>(?i:.*outbox_event\.payload)</includeExpression>
+                                </forcedType>
+                            </forcedTypes>
                             <properties>
                                 <property>
                                     <key>scripts</key>

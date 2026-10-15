@@ -9,7 +9,8 @@ public class AcceptOrderException extends RuntimeException {
         ORDER_CONFLICT,
         UNSUPPORTED_ORDER_TYPE,
         UNSUPPORTED_SYMBOL,
-        INCONSISTENT_RESERVATION
+        INCONSISTENT_RESERVATION,
+        INCONSISTENT_OUTBOX
     }
 
     private final Reason reason;

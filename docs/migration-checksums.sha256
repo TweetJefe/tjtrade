@@ -1,2 +1,4 @@
 06416e11d4898f74237ae695be537d90e109095c5060e8223dfb6c071c233410  user-service/src/main/resources/db/changelog/db-init.sql
 c93021793cf6b3a081b1b0502e69be0c982ebbaeff24b38cf5c8c02a356f59bd  portfolio-ledger-service/src/main/resources/db/changelog/init-db.sql
+52ca583e9b2087eb6c2872c91d53478796cb0972657f298ed08b21afbfd401b5  portfolio-ledger-service/src/main/resources/db/changelog/fund_reservation.sql
+94b65a9e99ad6a00d344c887ea7c58236dc32cdb1d13ba9d56fa46460bc176e6  portfolio-ledger-service/src/main/resources/db/changelog/outbox.sql
