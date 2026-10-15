@@ -4,9 +4,11 @@ import com.tj.common.dto.OrderDTO;
 import com.tj.common.enums.OrderSide;
 import com.tj.common.enums.OrderStatus;
 import com.tj.common.enums.OrderType;
+import com.tj.portfolioledger.command.ReserveFundsCommand;
 import com.tj.portfolioledger.model.Order;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
+import org.jooq.Select;
 import org.springframework.stereotype.Repository;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -32,7 +34,7 @@ public class OrderRepository {
                 .set(ORDERS.PRICE, order.getPrice())
                 .set(ORDERS.QUANTITY, order.getQuantity())
                 .set(ORDERS.FILLED_QUANTITY, BigDecimal.ZERO)
-                .set(ORDERS.STATUS, "OPEN")
+                .set(ORDERS.STATUS, OrderStatus.NEW.name())
                 .set(ORDERS.CREATED_AT, time)
                 .set(ORDERS.UPDATED_AT, time)
                 .execute();
@@ -55,5 +57,27 @@ public class OrderRepository {
                         .createdAt(record.getCreatedAt().toInstant())
                         .updatedAt(record.getUpdatedAt().toInstant())
                         .build());
+    }
+
+    public boolean insertIfAbsent(Order order) {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+
+        int insertedRows = dsl.insertInto(ORDERS)
+                .set(ORDERS.ID, order.getId())
+                .set(ORDERS.USER_ID, order.getUserId())
+                .set(ORDERS.PRICE, order.getPrice())
+                .set(ORDERS.QUANTITY, order.getQuantity())
+                .set(ORDERS.FILLED_QUANTITY, BigDecimal.ZERO)
+                .set(ORDERS.SYMBOL, order.getSymbol())
+                .set(ORDERS.STATUS, OrderStatus.NEW.name())
+                .set(ORDERS.TYPE, order.getType().name())
+                .set(ORDERS.SIDE, order.getSide().name())
+                .set(ORDERS.CREATED_AT, now)
+                .set(ORDERS.UPDATED_AT, now)
+                .onConflict(ORDERS.ID)
+                .doNothing()
+                .execute();
+
+        return insertedRows == 1;
     }
 }

@@ -70,6 +70,7 @@
                                     <filelist dir="${project.basedir}">
                                         <file name="../user-service/src/main/resources/db/changelog/db-init.sql"/>
                                         <file name="src/main/resources/db/changelog/init-db.sql"/>
+                                        <file name="src/main/resources/db/changelog/fund_reservation.sql"/>
                                     </filelist>
                                 </concat>
                             </target>
@@ -104,7 +105,7 @@
                     <generator>
                         <database>
                             <name>org.jooq.meta.extensions.ddl.DDLDatabase</name>
-                            <includes>orders|trades|wallet_balances</includes>
+                            <includes>orders|trades|wallet_balances|fund_reservation</includes>
                             <properties>
                                 <property>
                                     <key>scripts</key>
