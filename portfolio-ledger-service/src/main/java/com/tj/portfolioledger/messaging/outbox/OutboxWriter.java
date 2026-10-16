@@ -5,6 +5,7 @@ import com.tj.common.event.TradingMessages;
 import com.tj.portfolioledger.exception.AcceptOrderException;
 import com.tj.portfolioledger.model.Order;
 import com.tj.portfolioledger.repository.OutboxRepository;
+import com.tj.portfolioledger.repository.OutboxPublishCursorRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -18,6 +19,7 @@ import java.util.UUID;
 public class OutboxWriter {
 
     private final OutboxRepository repository;
+    private final OutboxPublishCursorRepository cursorRepository;
     private final OrderPlacedMessageCodec codec;
 
     public void appendOrderPlaced(Order order) {
@@ -27,6 +29,10 @@ public class OutboxWriter {
         String payloadHash = codec.payloadHash(payload);
 
         repository.insert(message, payload, payloadHash);
+
+        if (sequence == 1) {
+            cursorRepository.initializeIfAbsent(message.stream(), message.aggregateKey());
+        }
     }
 
     public void requireOrderPlaced(Order order) {

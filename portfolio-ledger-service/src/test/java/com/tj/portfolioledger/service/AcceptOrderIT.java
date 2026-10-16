@@ -7,6 +7,8 @@ import com.tj.common.event.OrderPlacedEvent;
 import com.tj.common.event.TradingMessages;
 import com.tj.portfolioledger.messaging.outbox.OrderPlacedMessageCodec;
 import com.tj.portfolioledger.messaging.outbox.OutboxWriter;
+import com.tj.portfolioledger.messaging.outbox.OutboxPublicationCoordinator;
+import com.tj.portfolioledger.repository.OutboxPublishCursorRepository;
 import com.tj.portfolioledger.repository.OutboxRepository;
 import com.tj.portfolioledger.command.AcceptOrderCommand;
 import com.tj.portfolioledger.command.ReserveFundsCommand;
@@ -114,6 +116,7 @@ class AcceptOrderIT {
         context.register(TransactionConfiguration.class, OrderRepository.class,
                 FundReservationRepository.class, WalletBalanceRepository.class,
                 ReserveFundsService.class, OutboxRepository.class,
+                OutboxPublishCursorRepository.class, OutboxPublicationCoordinator.class,
                 OrderPlacedMessageCodec.class, OutboxWriter.class, AcceptOrderService.class);
         context.refresh();
         service = context.getBean(AcceptOrderService.class);
@@ -138,6 +141,41 @@ class AcceptOrderIT {
             manager.setValidateExistingTransaction(true);
 
             return manager;
+        }
+    }
+
+    @Test
+    void publisherCursorLockDoesNotBlockNewOrderAdmission() throws Exception {
+        UUID userId = createUser();
+        createWallet(userId, "USDT", "1000");
+        var first = command(UUID.randomUUID(), userId, OrderSide.BUY, "100", "1");
+        assertEquals(AcceptOrderOutcome.ACCEPTED, service.acceptOrder(first).outcome());
+        assertEquals(0L, jdbc.queryForObject(
+                "select last_published_sequence from outbox_publish_cursor where stream = ? and aggregate_key = ?",
+                Long.class, TradingMessages.MATCHING_COMMANDS, first.symbol()
+        ));
+
+        var locked = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var coordinator = context.getBean(OutboxPublicationCoordinator.class);
+
+        try (var executor = Executors.newSingleThreadExecutor()) {
+            var publication = executor.submit(() -> coordinator.tryRun(
+                    TradingMessages.MATCHING_COMMANDS, first.symbol(), cursor -> {
+                        locked.countDown();
+                        assertTrue(release.await(5, TimeUnit.SECONDS));
+                    }
+            ));
+
+            try {
+                assertTrue(locked.await(5, TimeUnit.SECONDS));
+                var second = command(UUID.randomUUID(), userId, OrderSide.BUY, "100", "1");
+                assertEquals(AcceptOrderOutcome.ACCEPTED, service.acceptOrder(second).outcome());
+            } finally {
+                release.countDown();
+            }
+
+            assertTrue(publication.get(5, TimeUnit.SECONDS));
         }
     }
 

@@ -193,7 +193,7 @@ class PlatformIT {
         migrate("portfolio-ledger-service");
         try (var connection = DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
              var statement = connection.createStatement()) {
-            try (var result = statement.executeQuery("select count(*) from databasechangelog")) { assertTrue(result.next()); assertEquals(8, result.getInt(1)); }
+            try (var result = statement.executeQuery("select count(*) from databasechangelog")) { assertTrue(result.next()); assertEquals(9, result.getInt(1)); }
             try (var result = statement.executeQuery("select data_type from information_schema.columns where table_name='users' and column_name='id'")) { assertTrue(result.next()); assertEquals("uuid", result.getString(1)); }
             try (var result = statement.executeQuery("select data_type from information_schema.columns where table_name='users' and column_name='created_at'")) { assertTrue(result.next()); assertEquals("timestamp with time zone", result.getString(1)); }
         }

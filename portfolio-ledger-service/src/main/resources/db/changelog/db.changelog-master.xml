@@ -7,5 +7,6 @@
     <include file="init-db.sql" relativeToChangelogFile="true"/>
     <include file="fund_reservation.sql" relativeToChangelogFile="true"/>
     <include file="outbox.sql" relativeToChangelogFile="true"/>
+    <include file="outbox_publish_cursor.sql" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>
