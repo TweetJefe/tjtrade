@@ -11,6 +11,11 @@
     <dependencies>
         <dependency>
             <groupId>com.tj</groupId>
+            <artifactId>common-messaging</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.tj</groupId>
             <artifactId>common-api</artifactId>
             <version>${project.version}</version>
         </dependency>
@@ -32,6 +37,25 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.liquibase</groupId>
+            <artifactId>liquibase-core</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
     <build>
         <plugins>
@@ -39,6 +63,81 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
             </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <failIfNoTests>true</failIfNoTests>
+                    <systemPropertyVariables>
+                        <project.root>${project.basedir}/..</project.root>
+                        <postgres.image>${postgres.image}</postgres.image>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
+    <profiles>
+        <profile>
+            <id>migrate</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-enforcer-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>migration-endpoint-required</id>
+                                <goals>
+                                    <goal>enforce</goal>
+                                </goals>
+                                <configuration>
+                                    <rules>
+                                        <requireProperty>
+                                            <property>env.TJTRADE_MIGRATION_URL</property>
+                                            <regex>jdbc:postgresql://.+</regex>
+                                            <message>Set TJTRADE_MIGRATION_URL explicitly for the separate deployment migration step.</message>
+                                        </requireProperty>
+                                        <requireProperty>
+                                            <property>env.TJTRADE_MIGRATION_USER</property>
+                                            <regex>.+</regex>
+                                        </requireProperty>
+                                        <requireProperty>
+                                            <property>env.TJTRADE_MIGRATION_PASSWORD</property>
+                                            <regex>.+</regex>
+                                        </requireProperty>
+                                    </rules>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.liquibase</groupId>
+                        <artifactId>liquibase-maven-plugin</artifactId>
+                        <dependencies>
+                            <dependency>
+                                <groupId>org.postgresql</groupId>
+                                <artifactId>postgresql</artifactId>
+                                <version>${postgresql.version}</version>
+                            </dependency>
+                        </dependencies>
+                        <configuration>
+                            <changeLogFile>src/main/resources/db/changelog/db.changelog-master.xml</changeLogFile>
+                            <driver>org.postgresql.Driver</driver>
+                            <url>${env.TJTRADE_MIGRATION_URL}</url>
+                            <username>${env.TJTRADE_MIGRATION_USER}</username>
+                            <password>${env.TJTRADE_MIGRATION_PASSWORD}</password>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

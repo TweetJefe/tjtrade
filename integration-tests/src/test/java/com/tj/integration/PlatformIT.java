@@ -58,7 +58,9 @@ class PlatformIT {
     private static final Path ROOT = Path.of(System.getProperty("project.root"));
     private static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer(System.getProperty("postgres.image"));
     private static final GenericContainer<?> REDIS = new GenericContainer<>(System.getProperty("redis.image")).withExposedPorts(6379);
-    private static final KafkaContainer KAFKA = new KafkaContainer(System.getProperty("kafka.image"));
+    private static final KafkaContainer KAFKA = new KafkaContainer(System.getProperty("kafka.image"))
+            .withEnv("KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR", "1")
+            .withEnv("KAFKA_TRANSACTION_STATE_LOG_MIN_ISR", "1");
     private static final Map<String, Process> APPS = new HashMap<>();
     private static final Map<String, Integer> PORTS = new HashMap<>();
     private static int userGrpc;
@@ -78,6 +80,7 @@ class PlatformIT {
             KAFKA.start();
             migrate("user-service");
             migrate("portfolio-ledger-service");
+            migrate("matching-engine-service");
             userGrpc = freePort();
             ledgerGrpc = freePort();
             for (String module : List.of("user-service", "portfolio-ledger-service", "order-risk-service",
@@ -116,7 +119,7 @@ class PlatformIT {
                 "--spring.datasource.username=" + POSTGRES.getUsername(), "--spring.datasource.password=" + POSTGRES.getPassword(),
                 "--spring.data.redis.host=" + REDIS.getHost(), "--spring.data.redis.port=" + REDIS.getMappedPort(6379),
                 "--spring.kafka.bootstrap-servers=" + KAFKA.getBootstrapServers(),
-                "--spring.kafka.consumer.auto-offset-reset=earliest", "--spring.liquibase.enabled=false"));
+                "--tjtrade.grpc.deadline=10s", "--spring.kafka.consumer.auto-offset-reset=earliest", "--spring.liquibase.enabled=false"));
         if (module.equals("user-service") || module.equals("portfolio-ledger-service")) {
             command.add("--spring.grpc.server.port=" + (module.equals("user-service") ? userGrpc : ledgerGrpc));
             command.add("--spring.profiles.active=tls");
@@ -125,6 +128,12 @@ class PlatformIT {
             command.add("--spring.profiles.active=tls");
             command.add("--spring.grpc.client.channel.user-service.target=static://localhost:" + userGrpc);
             command.add("--spring.grpc.client.channel.portfolio-ledger-service.target=static://localhost:" + ledgerGrpc);
+        }
+        if (module.equals("matching-engine-service")) {
+            // Windows process termination does not send LeaveGroup. Bound failure detection
+            // for this test instead of assuming the consumer rejoins immediately after HTTP startup.
+            command.add("--spring.kafka.consumer.properties.session.timeout.ms=10000");
+            command.add("--spring.kafka.consumer.properties.heartbeat.interval.ms=3000");
         }
         var builder = new ProcessBuilder(command).directory(ROOT.toFile()).redirectErrorStream(true).redirectOutput(log.toFile());
         builder.environment().put("JWTSECRET", java.util.Base64.getEncoder().encodeToString(
@@ -191,9 +200,10 @@ class PlatformIT {
     void migrationsAreRepeatableAndCreatePostgresTypes() throws Exception {
         migrate("user-service");
         migrate("portfolio-ledger-service");
+        migrate("matching-engine-service");
         try (var connection = DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
              var statement = connection.createStatement()) {
-            try (var result = statement.executeQuery("select count(*) from databasechangelog")) { assertTrue(result.next()); assertEquals(9, result.getInt(1)); }
+            try (var result = statement.executeQuery("select count(*) from databasechangelog")) { assertTrue(result.next()); assertEquals(10, result.getInt(1)); }
             try (var result = statement.executeQuery("select data_type from information_schema.columns where table_name='users' and column_name='id'")) { assertTrue(result.next()); assertEquals("uuid", result.getString(1)); }
             try (var result = statement.executeQuery("select data_type from information_schema.columns where table_name='users' and column_name='created_at'")) { assertTrue(result.next()); assertEquals("timestamp with time zone", result.getString(1)); }
         }
@@ -213,7 +223,7 @@ class PlatformIT {
             try (var metadata = connection.getMetaData().getTables(null, "public", "%", new String[]{"TABLE"})) {
                 while (metadata.next()) {
                     String name = metadata.getString("TABLE_NAME");
-                    if (!name.startsWith("databasechangelog")) { actualTables.add(name); }
+                    if (!name.startsWith("databasechangelog") && !name.startsWith("matching_")) { actualTables.add(name); }
                 }
             }
             assertEquals(tables.keySet(), actualTables, "Codegen inputs must cover the migration history");
@@ -282,6 +292,123 @@ class PlatformIT {
             }
             fail("Kafka did not return the serialized event");
         }
+    }
+
+    @Test
+    void httpAdmissionReachesDurableMatchingAndRetrySurvivesMatchingRestart() throws Exception {
+        UUID buyer = createFundedWallet("1000");
+        UUID firstOrder = UUID.randomUUID();
+        String firstBody = orderCommand(firstOrder, buyer, "BUY", "2");
+
+        var response = submitOrder(firstBody);
+        assertEquals(200, response.statusCode(), response.body());
+        assertTrue(response.body().contains(firstOrder.toString()));
+        awaitMatching(firstOrder);
+
+        Process old = APPS.get("matching-engine-service");
+        old.destroy();
+        assertTrue(old.waitFor(10, TimeUnit.SECONDS));
+        startApp("matching-engine-service");
+
+        var retry = submitOrder(firstBody);
+        assertEquals(200, retry.statusCode(), retry.body());
+        assertTrue(retry.body().contains("ALREADY_ACCEPTED"));
+
+        UUID seller = createUser();
+        try (var connection = databaseConnection(); var statement = connection.prepareStatement(
+                "insert into wallet_balances (user_id, currency, available, locked) values (?, 'BTC', 1, 0)")) {
+            statement.setObject(1, seller);
+            assertEquals(1, statement.executeUpdate());
+        }
+
+        UUID secondOrder = UUID.randomUUID();
+        var sell = submitOrder(orderCommand(secondOrder, seller, "SELL", "1"));
+        assertEquals(200, sell.statusCode(), sell.body());
+        awaitMatching(secondOrder);
+
+        try (var connection = databaseConnection()) {
+            try (var statement = connection.prepareStatement("select count(*) from fund_reservation where order_id in (?, ?)")) {
+                statement.setObject(1, firstOrder);
+                statement.setObject(2, secondOrder);
+                try (var rows = statement.executeQuery()) { assertTrue(rows.next()); assertEquals(2, rows.getInt(1)); }
+            }
+
+            try (var statement = connection.prepareStatement("select remaining_quantity from matching_order where order_id = ?")) {
+                statement.setObject(1, firstOrder);
+                try (var rows = statement.executeQuery()) { assertTrue(rows.next()); assertEquals(0, BigDecimal.ONE.compareTo(rows.getBigDecimal(1))); }
+            }
+
+            try (var statement = connection.prepareStatement("select payload->'fills'->0->>'buyOrderId', payload->'fills'->0->>'sellOrderId' from matching_result_outbox where payload->>'orderId' = ?")) {
+                statement.setString(1, secondOrder.toString());
+                try (var rows = statement.executeQuery()) {
+                    assertTrue(rows.next());
+                    assertEquals(firstOrder.toString(), rows.getString(1));
+                    assertEquals(secondOrder.toString(), rows.getString(2));
+                }
+            }
+
+            try (var statement = connection.prepareStatement("select available, locked from wallet_balances where user_id = ? and currency = 'USDT'")) {
+                statement.setObject(1, buyer);
+                try (var rows = statement.executeQuery()) {
+                    assertTrue(rows.next());
+                    assertEquals(0, new BigDecimal("800").compareTo(rows.getBigDecimal(1)));
+                    assertEquals(0, new BigDecimal("200").compareTo(rows.getBigDecimal(2)));
+                }
+            }
+        }
+
+        var conflict = submitOrder(firstBody.replace("\"quantity\":\"2\"", "\"quantity\":\"3\""));
+        assertEquals(409, conflict.statusCode(), conflict.body());
+    }
+
+    @Test
+    void httpAdmissionRejectsMissingStableIdAndInsufficientFundsWithoutCreatingOrder() throws Exception {
+        UUID userId = createFundedWallet("1");
+        UUID orderId = UUID.randomUUID();
+        String body = orderCommand(orderId, userId, "BUY", "1");
+        var insufficient = submitOrder(body);
+        assertEquals(400, insufficient.statusCode(), insufficient.body());
+        var missing = submitOrder(body.replace("\"orderId\":\"" + orderId + "\",", ""));
+        assertEquals(400, missing.statusCode(), missing.body());
+
+        try (var connection = databaseConnection(); var statement = connection.prepareStatement("select count(*) from orders where id = ?")) {
+            statement.setObject(1, orderId);
+            try (var rows = statement.executeQuery()) { assertTrue(rows.next()); assertEquals(0, rows.getInt(1)); }
+        }
+    }
+
+    private static String orderCommand(UUID orderId, UUID userId, String side, String quantity) {
+        return "{\"orderId\":\"" + orderId + "\",\"userId\":\"" + userId
+                + "\",\"symbol\":\"BTC_USDT\",\"side\":\"" + side
+                + "\",\"type\":\"LIMIT\",\"price\":\"100\",\"quantity\":\"" + quantity + "\"}";
+    }
+
+    private static HttpResponse<String> submitOrder(String body) throws Exception {
+        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + PORTS.get("order-risk-service") + "/api/v1/risk"))
+                .header("Content-Type", "application/json")
+                .timeout(Duration.ofSeconds(15))
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build();
+
+        return HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+    }
+
+    private static void awaitMatching(UUID orderId) throws Exception {
+        Instant limit = Instant.now().plusSeconds(30);
+
+        try (var connection = databaseConnection(); var statement = connection.prepareStatement("select count(*) from matching_inbox where order_id = ?")) {
+            statement.setObject(1, orderId);
+
+            while (Instant.now().isBefore(limit)) {
+                try (var rows = statement.executeQuery()) {
+                    assertTrue(rows.next());
+                    if (rows.getInt(1) == 1) { return; }
+                }
+                Thread.sleep(100);
+            }
+        }
+
+        fail("Accepted order did not reach durable matching: " + orderId);
     }
 
     private static Connection databaseConnection() throws Exception {

@@ -5,6 +5,12 @@ spring:
   threads:
     virtual:
       enabled: true
+  datasource:
+    url: ${MATCHING_DB_URL:jdbc:postgresql://localhost:5435/tjtrade_db}
+    username: ${MATCHING_DB_USER:postgres}
+    password: ${MATCHING_DB_PASSWORD:postgres}
+  liquibase:
+    enabled: false
   application:
     name: matching-engine-service
   kafka:

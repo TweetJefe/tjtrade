@@ -3,3 +3,4 @@ c93021793cf6b3a081b1b0502e69be0c982ebbaeff24b38cf5c8c02a356f59bd  portfolio-ledg
 52ca583e9b2087eb6c2872c91d53478796cb0972657f298ed08b21afbfd401b5  portfolio-ledger-service/src/main/resources/db/changelog/fund_reservation.sql
 94b65a9e99ad6a00d344c887ea7c58236dc32cdb1d13ba9d56fa46460bc176e6  portfolio-ledger-service/src/main/resources/db/changelog/outbox.sql
 904a6a234b2275e06d03ae7336a8a76794b5b0662479263fbefdfd93a233e324  portfolio-ledger-service/src/main/resources/db/changelog/outbox_publish_cursor.sql
+4e2a03a9af567d2a9dfbfcac63c6200960fdc47232beba2e4a4ad351cfbec13d  matching-engine-service/src/main/resources/db/changelog/durable-matching.sql
