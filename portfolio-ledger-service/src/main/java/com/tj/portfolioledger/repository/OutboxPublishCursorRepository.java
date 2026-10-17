@@ -38,4 +38,24 @@ public class OutboxPublishCursorRepository {
                         record.getStream(), record.getAggregateKey(), record.getLastPublishedSequence()
                 ));
     }
+    public long currentPosition(String stream, String aggregateKey) {
+        return dsl.select(OUTBOX_PUBLISH_CURSOR.LAST_PUBLISHED_SEQUENCE)
+                .from(OUTBOX_PUBLISH_CURSOR)
+                .where(OUTBOX_PUBLISH_CURSOR.STREAM.eq(stream))
+                .and(OUTBOX_PUBLISH_CURSOR.AGGREGATE_KEY.eq(aggregateKey))
+                .fetchSingle(OUTBOX_PUBLISH_CURSOR.LAST_PUBLISHED_SEQUENCE);
+    }
+
+    public void advance(String stream, String aggregateKey, long previousSequence) {
+        int updatedRows = dsl.update(OUTBOX_PUBLISH_CURSOR)
+                .set(OUTBOX_PUBLISH_CURSOR.LAST_PUBLISHED_SEQUENCE, Math.addExact(previousSequence, 1L))
+                .where(OUTBOX_PUBLISH_CURSOR.STREAM.eq(stream))
+                .and(OUTBOX_PUBLISH_CURSOR.AGGREGATE_KEY.eq(aggregateKey))
+                .and(OUTBOX_PUBLISH_CURSOR.LAST_PUBLISHED_SEQUENCE.eq(previousSequence))
+                .execute();
+
+        if (updatedRows != 1) {
+            throw new IllegalStateException("Outbox publication cursor changed unexpectedly");
+        }
+    }
 }

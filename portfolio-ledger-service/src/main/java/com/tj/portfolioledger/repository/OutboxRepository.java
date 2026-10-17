@@ -11,6 +11,7 @@ import org.springframework.stereotype.Repository;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Optional;
+import java.util.List;
 import java.util.UUID;
 
 import static com.tj.portfolioledger.jooq.Tables.OUTBOX_EVENT;
@@ -60,5 +61,48 @@ public class OutboxRepository {
                 .and(OUTBOX_EVENT.EVENT_TYPE.eq(TradingMessages.ORDER_PLACED))
                 .and(OUTBOX_EVENT.CORRELATION_ID.eq(orderId))
                 .fetchOptional();
+    }
+    public Optional<OutboxEventRecord> findSequence(String stream, String aggregateKey, long sequence) {
+        return dsl.selectFrom(OUTBOX_EVENT)
+                .where(OUTBOX_EVENT.STREAM.eq(stream))
+                .and(OUTBOX_EVENT.AGGREGATE_KEY.eq(aggregateKey))
+                .and(OUTBOX_EVENT.SEQUENCE.eq(sequence))
+                .fetchOptional();
+    }
+
+    public long lastAllocated(String stream, String aggregateKey) {
+        return dsl.select(OUTBOX_SEQUENCE.LAST_SEQUENCE)
+                .from(OUTBOX_SEQUENCE)
+                .where(OUTBOX_SEQUENCE.STREAM.eq(stream))
+                .and(OUTBOX_SEQUENCE.AGGREGATE_KEY.eq(aggregateKey))
+                .fetchOptional(OUTBOX_SEQUENCE.LAST_SEQUENCE)
+                .orElse(0L);
+    }
+
+    public List<String> pendingMarkets(int limit) {
+        var cursor = com.tj.portfolioledger.jooq.Tables.OUTBOX_PUBLISH_CURSOR;
+
+        return dsl.select(cursor.AGGREGATE_KEY)
+                .from(cursor)
+                .join(OUTBOX_SEQUENCE)
+                .on(OUTBOX_SEQUENCE.STREAM.eq(cursor.STREAM))
+                .and(OUTBOX_SEQUENCE.AGGREGATE_KEY.eq(cursor.AGGREGATE_KEY))
+                .where(cursor.STREAM.eq(TradingMessages.MATCHING_COMMANDS))
+                .and(OUTBOX_SEQUENCE.LAST_SEQUENCE.gt(cursor.LAST_PUBLISHED_SEQUENCE))
+                .orderBy(cursor.AGGREGATE_KEY)
+                .limit(limit)
+                .fetch(cursor.AGGREGATE_KEY);
+    }
+
+    public void markPublished(UUID eventId) {
+        int updatedRows = dsl.update(OUTBOX_EVENT)
+                .set(OUTBOX_EVENT.PUBLISHED_AT, OffsetDateTime.now(ZoneOffset.UTC))
+                .where(OUTBOX_EVENT.EVENT_ID.eq(eventId))
+                .and(OUTBOX_EVENT.PUBLISHED_AT.isNull())
+                .execute();
+
+        if (updatedRows != 1) {
+            throw new IllegalStateException("Outbox publication receipt was not saved");
+        }
     }
 }
