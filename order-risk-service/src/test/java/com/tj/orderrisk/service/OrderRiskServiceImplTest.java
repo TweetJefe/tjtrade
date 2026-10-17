@@ -2,10 +2,11 @@ package com.tj.orderrisk.service;
 
 import com.tj.common.enums.OrderSide;
 import com.tj.common.enums.OrderType;
+import com.tj.common.grpc.AcceptOrderResponse;
 import com.tj.orderrisk.dto.RiskCheckRequest;
 import com.tj.orderrisk.grpc.PortfolioServiceGrpcClient;
-import com.tj.orderrisk.grpc.UserServiceGrpcClient;
-import com.tj.orderrisk.kafka.OrderRiskKafkaProducer;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -23,8 +24,8 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class OrderRiskServiceImplTest {
+
     private RedisTemplate<String, Object> redisTemplate;
-    private OrderRiskKafkaProducer producer;
     private PortfolioServiceGrpcClient portfolioClient;
     private OrderRiskServiceImpl service;
     private RiskCheckRequest request;
@@ -33,11 +34,10 @@ class OrderRiskServiceImplTest {
     @SuppressWarnings("unchecked")
     void setUp() {
         redisTemplate = mock(RedisTemplate.class);
-        producer = mock(OrderRiskKafkaProducer.class);
         portfolioClient = mock(PortfolioServiceGrpcClient.class);
-        service = new OrderRiskServiceImpl(redisTemplate, producer,
-                mock(UserServiceGrpcClient.class), portfolioClient);
+        service = new OrderRiskServiceImpl(redisTemplate, portfolioClient);
         request = RiskCheckRequest.builder()
+                .orderId(UUID.randomUUID())
                 .userId(UUID.randomUUID())
                 .symbol("BTC_USDT")
                 .side(OrderSide.BUY)
@@ -48,63 +48,56 @@ class OrderRiskServiceImplTest {
     }
 
     @Test
-    void allowedRequestLocksFundsAndPublishesOrder() {
+    void allowedRequestUsesAtomicAdmissionAndPreservesOrderIdOnRetry() {
         rateLimitResult().thenReturn(1L);
-        when(portfolioClient.lockFunds(eq(request.getUserId()), eq("USDT"),
-                eq(new BigDecimal("200")), any(UUID.class))).thenReturn(true);
+        when(portfolioClient.acceptOrder(same(request))).thenReturn(accepted(AcceptOrderResponse.Outcome.ACCEPTED),
+                accepted(AcceptOrderResponse.Outcome.ALREADY_ACCEPTED));
 
-        assertTrue(service.validateOrderRisk(request).isApproved());
+        var first = service.validateOrderRisk(request);
+        var duplicate = service.validateOrderRisk(request);
 
-        ArgumentCaptor<UUID> orderId = ArgumentCaptor.forClass(UUID.class);
-        verify(portfolioClient).lockFunds(eq(request.getUserId()), eq("USDT"),
-                eq(new BigDecimal("200")), orderId.capture());
-        verify(producer).sendOrderPlacedEvent(eq(orderId.getValue()), same(request));
+        assertTrue(first.isApproved());
+        assertEquals(request.getOrderId(), first.getOrderId());
+        assertEquals("ACCEPTED", first.getOutcome());
+        assertTrue(duplicate.isApproved());
+        assertEquals(request.getOrderId(), duplicate.getOrderId());
+        assertEquals("ALREADY_ACCEPTED", duplicate.getOutcome());
+        verify(portfolioClient, times(2)).acceptOrder(same(request));
     }
 
     @Test
-    void deniedRequestDoesNotLockFundsOrPublishOrder() {
+    void deniedRequestDoesNotCallLedger() {
         rateLimitResult().thenReturn(0L);
 
         var response = service.validateOrderRisk(request);
 
         assertFalse(response.isApproved());
-        assertEquals("Rate limit exceeded. Maximum 5 orders per second.", response.getRejectReason());
-        verifyNoInteractions(portfolioClient, producer);
+        assertEquals("RATE_LIMITED", response.getOutcome());
+        assertEquals(request.getOrderId(), response.getOrderId());
+        verifyNoInteractions(portfolioClient);
     }
 
     @Test
     void fiveAllowedRequestsProceedAndSixthDeniedRequestStops() {
         rateLimitResult().thenReturn(1L, 1L, 1L, 1L, 1L, 0L);
-        when(portfolioClient.lockFunds(any(UUID.class), eq("USDT"),
-                eq(new BigDecimal("200")), any(UUID.class))).thenReturn(true);
+        when(portfolioClient.acceptOrder(same(request))).thenReturn(accepted(AcceptOrderResponse.Outcome.ACCEPTED));
 
-        for (int i = 0; i < 5; i++) {
+        for (int index = 0; index < 5; index++) {
             assertTrue(service.validateOrderRisk(request).isApproved());
         }
+
         assertFalse(service.validateOrderRisk(request).isApproved());
-
-        verify(portfolioClient, times(5)).lockFunds(eq(request.getUserId()), eq("USDT"),
-                eq(new BigDecimal("200")), any(UUID.class));
-        verify(producer, times(5)).sendOrderPlacedEvent(any(UUID.class), same(request));
-        verifyNoMoreInteractions(portfolioClient, producer);
+        verify(portfolioClient, times(5)).acceptOrder(same(request));
+        verifyNoMoreInteractions(portfolioClient);
     }
 
     @Test
-    void nullResultFailsBeforeFundsAreLocked() {
-        rateLimitResult().thenReturn((Long) null);
+    void nullOrUnexpectedLimiterResultFailsBeforeAdmission() {
+        rateLimitResult().thenReturn(null, 2L);
 
         assertThrows(IllegalStateException.class, () -> service.validateOrderRisk(request));
-
-        verifyNoInteractions(portfolioClient, producer);
-    }
-
-    @Test
-    void unexpectedResultFailsBeforeFundsAreLocked() {
-        rateLimitResult().thenReturn(2L);
-
         assertThrows(IllegalStateException.class, () -> service.validateOrderRisk(request));
-
-        verifyNoInteractions(portfolioClient, producer);
+        verifyNoInteractions(portfolioClient);
     }
 
     @Test
@@ -119,6 +112,44 @@ class OrderRiskServiceImplTest {
         assertEquals(Long.class, script.getValue().getResultType());
         assertEquals(new ClassPathResource("luascripts/rate-limiter.lua").getContentAsString(
                 java.nio.charset.StandardCharsets.UTF_8), script.getValue().getScriptAsString());
+    }
+
+    @Test
+    void missingStableOrderIdAndMarketOrderCannotReserveFunds() {
+        request.setOrderId(null);
+        assertThrows(IllegalArgumentException.class, () -> service.validateOrderRisk(request));
+        request.setOrderId(UUID.randomUUID());
+        request.setType(OrderType.MARKET);
+
+        assertFalse(service.validateOrderRisk(request).isApproved());
+        verifyNoInteractions(portfolioClient, redisTemplate);
+    }
+
+    @Test
+    void transportFailureRemainsUnknownRatherThanReportedAsRejection() {
+        rateLimitResult().thenReturn(1L);
+        when(portfolioClient.acceptOrder(same(request)))
+                .thenThrow(Status.DEADLINE_EXCEEDED.asRuntimeException());
+
+        var failure = assertThrows(StatusRuntimeException.class, () -> service.validateOrderRisk(request));
+        assertEquals(Status.Code.DEADLINE_EXCEEDED, failure.getStatus().getCode());
+    }
+
+    @Test
+    void insufficientFundsIsAConfirmedBusinessRejection() {
+        rateLimitResult().thenReturn(1L);
+        when(portfolioClient.acceptOrder(same(request)))
+                .thenThrow(Status.RESOURCE_EXHAUSTED.asRuntimeException());
+
+        var response = service.validateOrderRisk(request);
+
+        assertFalse(response.isApproved());
+        assertEquals("REJECTED", response.getOutcome());
+        assertEquals(request.getOrderId(), response.getOrderId());
+    }
+
+    private AcceptOrderResponse accepted(AcceptOrderResponse.Outcome outcome) {
+        return AcceptOrderResponse.newBuilder().setOrderId(request.getOrderId().toString()).setOutcome(outcome).build();
     }
 
     private org.mockito.stubbing.OngoingStubbing<Long> rateLimitResult() {

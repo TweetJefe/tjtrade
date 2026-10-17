@@ -100,7 +100,8 @@ class ReserveFundsIT {
             context.refresh();
 
             grpcServer = NettyServerBuilder.forPort(0)
-                    .addService(new PortfolioGrpcServiceImpl(context.getBean(ReserveFundsService.class)))
+                    .addService(new PortfolioGrpcServiceImpl(context.getBean(ReserveFundsService.class),
+                            org.mockito.Mockito.mock(AcceptOrderService.class)))
                     .build()
                     .start();
         } catch (Exception | AssertionError failure) {

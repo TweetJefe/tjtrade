@@ -3,6 +3,7 @@ package com.tj.orderrisk.controller;
 import com.tj.orderrisk.dto.RiskCheckRequest;
 import com.tj.orderrisk.dto.RiskCheckResponse;
 import com.tj.orderrisk.service.OrderRiskService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -20,14 +21,15 @@ public class OrderRiskController {
 
     @PostMapping
     public ResponseEntity<RiskCheckResponse> placeOrder(
-            @RequestBody RiskCheckRequest request
+            @Valid @RequestBody RiskCheckRequest request
     ){
         RiskCheckResponse response = orderRiskService.validateOrderRisk(request);
 
         if (response.isApproved()){
             return ResponseEntity.ok(response);
         }else{
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
+            return ResponseEntity.status("RATE_LIMITED".equals(response.getOutcome())
+                    ? HttpStatus.TOO_MANY_REQUESTS : HttpStatus.BAD_REQUEST).body(response);
         }
     }
 

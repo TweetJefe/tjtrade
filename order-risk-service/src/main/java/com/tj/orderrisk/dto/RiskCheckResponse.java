@@ -10,6 +10,8 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @Builder
 public class RiskCheckResponse {
+    private java.util.UUID orderId;
+    private String outcome;
     private boolean approved;
     private String rejectReason;
 }

@@ -1,5 +1,12 @@
 package com.tj.portfolioledger.grpc;
 
+import com.tj.common.grpc.AcceptOrderRequest;
+import com.tj.common.grpc.AcceptOrderResponse;
+import com.tj.common.enums.OrderSide;
+import com.tj.common.enums.OrderType;
+import com.tj.portfolioledger.command.AcceptOrderCommand;
+import com.tj.portfolioledger.exception.AcceptOrderException;
+import com.tj.portfolioledger.service.AcceptOrderService;
 import com.tj.common.grpc.LockFundsRequest;
 import com.tj.common.grpc.LockFundsResponse;
 import com.tj.common.grpc.PortfolioServiceGrpc;
@@ -23,6 +30,7 @@ import java.util.UUID;
 public class PortfolioGrpcServiceImpl extends PortfolioServiceGrpc.PortfolioServiceImplBase {
 
     private final ReserveFundsService service;
+    private final AcceptOrderService acceptOrderService;
 
     @Override
     public void lockFunds(LockFundsRequest request, StreamObserver<LockFundsResponse> responseObserver) {
@@ -100,5 +108,52 @@ public class PortfolioGrpcServiceImpl extends PortfolioServiceGrpc.PortfolioServ
 
         responseObserver.onNext(response);
         responseObserver.onCompleted();
+    }
+    @Override
+    public void acceptOrder(AcceptOrderRequest request, StreamObserver<AcceptOrderResponse> observer) {
+        try {
+            OrderSide side = switch (request.getSide()) {
+                case BUY -> OrderSide.BUY;
+                case SELL -> OrderSide.SELL;
+                default -> throw new IllegalArgumentException("Order side is required");
+            };
+            OrderType type = switch (request.getType()) {
+                case LIMIT -> OrderType.LIMIT;
+                default -> throw new IllegalArgumentException("Only LIMIT orders are supported");
+            };
+            var command = new AcceptOrderCommand(
+                    UUID.fromString(request.getOrderId()), UUID.fromString(request.getUserId()),
+                    request.getSymbol(), side, type, new BigDecimal(request.getPrice()), new BigDecimal(request.getQuantity())
+            );
+            var result = acceptOrderService.acceptOrder(command);
+            var outcome = switch (result.outcome()) {
+                case ACCEPTED -> AcceptOrderResponse.Outcome.ACCEPTED;
+                case ALREADY_ACCEPTED -> AcceptOrderResponse.Outcome.ALREADY_ACCEPTED;
+            };
+            observer.onNext(AcceptOrderResponse.newBuilder()
+                    .setOrderId(result.orderId().toString())
+                    .setOutcome(outcome)
+                    .build());
+            observer.onCompleted();
+        } catch (IllegalArgumentException exception) {
+            observer.onError(io.grpc.Status.INVALID_ARGUMENT.withDescription("Invalid order command").asRuntimeException());
+        } catch (AcceptOrderException exception) {
+            var status = switch (exception.getReason()) {
+                case ORDER_CONFLICT -> io.grpc.Status.ALREADY_EXISTS;
+                case UNSUPPORTED_ORDER_TYPE, UNSUPPORTED_SYMBOL -> io.grpc.Status.INVALID_ARGUMENT;
+                case INCONSISTENT_RESERVATION, INCONSISTENT_OUTBOX -> io.grpc.Status.DATA_LOSS;
+            };
+            observer.onError(status.withDescription("Order admission rejected").asRuntimeException());
+        } catch (ReserveFundsException exception) {
+            var status = switch (exception.getReason()) {
+                case INSUFFICIENT_FUNDS_OR_WALLET_MISSING -> io.grpc.Status.RESOURCE_EXHAUSTED;
+                case CONFLICT -> io.grpc.Status.ALREADY_EXISTS;
+                case RESERVATION_CLOSED -> io.grpc.Status.FAILED_PRECONDITION;
+            };
+            observer.onError(status.withDescription("Order reservation rejected").asRuntimeException());
+        } catch (Exception exception) {
+            log.error("Order admission failed for order {}", request.getOrderId(), exception);
+            observer.onError(io.grpc.Status.INTERNAL.withDescription("Order admission failed").asRuntimeException());
+        }
     }
 }
