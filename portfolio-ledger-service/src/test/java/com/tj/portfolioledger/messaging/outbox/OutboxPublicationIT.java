@@ -152,7 +152,7 @@ class OutboxPublicationIT {
         ));
         assertTrue(coordinator.tryRun(STREAM, EXISTING_MARKET,
                 cursor -> assertEquals(0L, cursor.lastPublishedSequence())));
-        assertEquals(9, jdbc.queryForObject("select count(*) from databasechangelog", Integer.class));
+        assertEquals(10, jdbc.queryForObject("select count(*) from databasechangelog", Integer.class));
     }
 
     @Test
