@@ -11,6 +11,10 @@ spring:
       server:
         webflux:
           routes:
+            - id: ledger-wallets
+              uri: ${LEDGER_HTTP_URI:http://localhost:8084}
+              predicates:
+                - Path=/api/v1/wallets,/api/v1/wallets/**
             - id: user-auth-route
               uri: http://localhost:8081
               predicates:

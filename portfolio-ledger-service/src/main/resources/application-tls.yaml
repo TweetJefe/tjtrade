@@ -2,11 +2,20 @@ spring:
   ssl:
     bundle:
       pem:
+        grpc-trust:
+          truststore:
+            certificate: ${GRPC_TLS_CA}
         grpc-server:
           keystore:
             certificate: ${GRPC_TLS_CERT}
             private-key: ${GRPC_TLS_KEY}
   grpc:
+    client:
+      channel:
+        user-service:
+          ssl:
+            enabled: true
+            bundle: grpc-trust
     server:
       ssl:
         enabled: true

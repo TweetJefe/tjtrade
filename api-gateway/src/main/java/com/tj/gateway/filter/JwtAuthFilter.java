@@ -10,6 +10,9 @@ import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ProblemDetail;
+import tools.jackson.databind.json.JsonMapper;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
@@ -62,7 +65,13 @@ public class JwtAuthFilter implements GlobalFilter, Ordered {
 
     private Mono<Void> onError(ServerWebExchange exchange, HttpStatus httpStatus){
         exchange.getResponse().setStatusCode(httpStatus);
-        return exchange.getResponse().setComplete();
+        exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_PROBLEM_JSON);
+        exchange.getResponse().getHeaders().set(HttpHeaders.WWW_AUTHENTICATE, "Bearer");
+        var body = ProblemDetail.forStatusAndDetail(httpStatus, "A valid bearer token is required");
+        body.setTitle(httpStatus.getReasonPhrase());
+        byte[] payload = JsonMapper.builder().build().writeValueAsBytes(body);
+
+        return exchange.getResponse().writeWith(Mono.just(exchange.getResponse().bufferFactory().wrap(payload)));
     }
 
     @Override

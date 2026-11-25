@@ -124,6 +124,9 @@ class PlatformIT {
             command.add("--spring.grpc.server.port=" + (module.equals("user-service") ? userGrpc : ledgerGrpc));
             command.add("--spring.profiles.active=tls");
         }
+        if (module.equals("portfolio-ledger-service")) {
+            command.add("--spring.grpc.client.channel.user-service.target=static://localhost:" + userGrpc);
+        }
         if (module.equals("order-risk-service")) {
             command.add("--spring.profiles.active=tls");
             command.add("--spring.grpc.client.channel.user-service.target=static://localhost:" + userGrpc);
@@ -136,6 +139,7 @@ class PlatformIT {
             command.add("--spring.kafka.consumer.properties.heartbeat.interval.ms=3000");
         }
         var builder = new ProcessBuilder(command).directory(ROOT.toFile()).redirectErrorStream(true).redirectOutput(log.toFile());
+        builder.environment().put("LEDGER_HTTP_URI", "http://localhost:" + PORTS.get("portfolio-ledger-service"));
         builder.environment().put("JWTSECRET", java.util.Base64.getEncoder().encodeToString(
                 "platform-smoke-test-secret-at-least-32-bytes-long".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         builder.environment().put("GRPC_TLS_CERT", ROOT.resolve("integration-tests/src/test/resources/tls/server.crt").toString());
@@ -409,6 +413,106 @@ class PlatformIT {
         }
 
         fail("Accepted order did not reach durable matching: " + orderId);
+    }
+
+    @Test
+    void walletHttpApiUsesJwtOwnerAndPreservesBalancesOnRetry() throws Exception {
+        UUID owner = createUser();
+        UUID other = createUser();
+        String token = walletToken(owner.toString(), Instant.now().plusSeconds(300));
+        var mapper = tools.jackson.databind.json.JsonMapper.builder().build();
+        var created = walletHttp("api-gateway", "POST", "", token, "{\"currency\":\"USDT\"}");
+        assertEquals(201, created.statusCode(), created.body());
+        var first = mapper.readTree(created.body());
+        String walletId = first.get("walletId").asString();
+        assertEquals(owner.toString(), first.get("userId").asString());
+        assertEquals("0.00000000", first.get("total").asString());
+        assertEquals("/api/v1/wallets/" + walletId, created.headers().firstValue("Location").orElseThrow());
+
+        try (var connection = databaseConnection();
+             var statement = connection.prepareStatement("update wallet_balances set available = 12.34567890, locked = 2 where id = ?")) {
+            statement.setObject(1, UUID.fromString(walletId));
+            assertEquals(1, statement.executeUpdate());
+        }
+
+        var repeated = walletHttp("portfolio-ledger-service", "POST", "", token, "{\"currency\":\"USDT\"}");
+        assertEquals(200, repeated.statusCode(), repeated.body());
+        var current = mapper.readTree(repeated.body());
+        assertEquals(walletId, current.get("walletId").asString());
+        assertEquals("12.34567890", current.get("available").asString());
+        assertEquals("2.00000000", current.get("locked").asString());
+        assertEquals("14.34567890", current.get("total").asString());
+        assertEquals(200, walletHttp("api-gateway", "GET", "/" + walletId, token, null).statusCode());
+        var ownList = walletHttp("portfolio-ledger-service", "GET", "", token, null);
+        assertEquals(200, ownList.statusCode());
+        assertEquals(1, mapper.readTree(ownList.body()).size());
+        String otherToken = walletToken(other.toString(), Instant.now().plusSeconds(300));
+        var forbidden = walletHttp("portfolio-ledger-service", "GET", "/" + walletId, otherToken, null);
+        assertEquals(404, forbidden.statusCode());
+        assertTrue(forbidden.headers().firstValue("Content-Type").orElseThrow().startsWith("application/problem+json"));
+        assertEquals(0, mapper.readTree(walletHttp("portfolio-ledger-service", "GET", "", otherToken, null).body()).size());
+    }
+
+    @Test
+    void walletHttpApiRejectsUntrustedIdentityAndInvalidFundingFields() throws Exception {
+        UUID userId = createUser();
+        String token = walletToken(userId.toString(), Instant.now().plusSeconds(300));
+
+        for (String invalid : new String[]{null, "bad-token", walletToken(userId.toString(), Instant.now().minusSeconds(300)), walletToken("not-a-uuid", Instant.now().plusSeconds(300))}) {
+            for (String module : List.of("portfolio-ledger-service", "api-gateway")) {
+                var response = walletHttp(module, "POST", "", invalid, "{\"currency\":\"BTC\"}");
+                assertEquals(401, response.statusCode(), response.body());
+                assertTrue(response.headers().firstValue("Content-Type").orElseThrow().startsWith("application/problem+json"));
+            }
+        }
+
+        for (String body : new String[]{"{}", "{\"currency\":\"USD\"}", "{\"currency\":\"BTC\",\"available\":100}", "{\"currency\":\"BTC\",\"userId\":\"" + UUID.randomUUID() + "\"}"}) {
+            assertEquals(400, walletHttp("portfolio-ledger-service", "POST", "", token, body).statusCode());
+        }
+
+        var forgedHeader = HttpRequest.newBuilder(URI.create("http://localhost:" + PORTS.get("portfolio-ledger-service") + "/api/v1/wallets"))
+                .header("X-User-Id", userId.toString()).GET().build();
+        assertEquals(401, HttpClient.newHttpClient().send(forgedHeader, HttpResponse.BodyHandlers.ofString()).statusCode());
+        assertEquals(404, walletHttp("portfolio-ledger-service", "POST", "", walletToken(UUID.randomUUID().toString(), Instant.now().plusSeconds(300)), "{\"currency\":\"BTC\"}").statusCode());
+
+        try (var connection = databaseConnection();
+             var statement = connection.prepareStatement("update users set status = 'DELETED' where id = ?")) {
+            statement.setObject(1, userId);
+            assertEquals(1, statement.executeUpdate());
+        }
+
+        assertEquals(403, walletHttp("portfolio-ledger-service", "POST", "", token, "{\"currency\":\"BTC\"}").statusCode());
+        try (var connection = databaseConnection();
+             var statement = connection.prepareStatement("select count(*) from wallet_balances where user_id = ?")) {
+            statement.setObject(1, userId);
+            try (var rows = statement.executeQuery()) { assertTrue(rows.next()); assertEquals(0, rows.getInt(1)); }
+        }
+    }
+
+    private static HttpResponse<String> walletHttp(String module, String method, String suffix, String token, String body) throws Exception {
+        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + PORTS.get(module) + "/api/v1/wallets" + suffix)).timeout(Duration.ofSeconds(15));
+
+        if (token != null) {
+            request.header("Authorization", "Bearer " + token);
+        }
+
+        if (body != null) {
+            request.header("Content-Type", "application/json");
+        }
+
+        return HttpClient.newHttpClient().send(request.method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private static String walletToken(String subject, Instant expiry) throws Exception {
+        var encoder = java.util.Base64.getUrlEncoder().withoutPadding();
+        var mapper = tools.jackson.databind.json.JsonMapper.builder().build();
+        String header = encoder.encodeToString("{\"alg\":\"HS256\",\"typ\":\"JWT\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        String payload = encoder.encodeToString(mapper.writeValueAsBytes(Map.of("sub", subject, "exp", expiry.getEpochSecond())));
+        String content = header + "." + payload;
+        var mac = javax.crypto.Mac.getInstance("HmacSHA256");
+        mac.init(new javax.crypto.spec.SecretKeySpec("platform-smoke-test-secret-at-least-32-bytes-long".getBytes(java.nio.charset.StandardCharsets.UTF_8), "HmacSHA256"));
+
+        return content + "." + encoder.encodeToString(mac.doFinal(content.getBytes(java.nio.charset.StandardCharsets.US_ASCII)));
     }
 
     private static Connection databaseConnection() throws Exception {

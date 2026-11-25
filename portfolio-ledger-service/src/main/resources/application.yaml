@@ -1,7 +1,16 @@
 server:
   port: 8084
 spring:
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
   grpc:
+    client:
+      channel:
+        user-service:
+          target: ${USER_GRPC_TARGET:static://localhost:9090}
+          ssl:
+            enabled: false
     server:
       port: ${GRPC_PORT:9095}
   application:
@@ -27,3 +36,6 @@ spring:
 tjtrade:
   trading:
     symbols: BTC_USDT,ETH_USDT
+
+jwt:
+  secret: ${JWTSECRET}
