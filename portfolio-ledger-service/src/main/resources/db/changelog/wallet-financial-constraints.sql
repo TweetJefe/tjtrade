@@ -1,4 +1,4 @@
---liquibase formatted SQL
+--liquibase formatted sql
 
 --changeset tjtrade:wallet_financial_constraints runInTransaction:true
 --preconditions onFail:HALT onError:HALT
