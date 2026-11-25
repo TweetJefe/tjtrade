@@ -10,6 +10,11 @@
     <artifactId>portfolio-ledger-service</artifactId>
     <dependencies>
         <dependency>
+            <groupId>io.swagger.core.v3</groupId>
+            <artifactId>swagger-annotations-jakarta</artifactId>
+            <version>2.2.36</version>
+        </dependency>
+        <dependency>
             <groupId>com.tj</groupId>
             <artifactId>common-messaging</artifactId>
             <version>${project.version}</version>

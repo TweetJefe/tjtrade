@@ -221,7 +221,7 @@ class ReserveFundsIT {
         for (String amount : List.of("0", "-1", "0.000000001", "100000000000000000000", "not-a-number")) {
             requests.add(reservationRequest(userId, UUID.randomUUID(), "USDT", amount));
         }
-        for (String asset : List.of("", " USDT", "USDT ", "A".repeat(21))) {
+        for (String asset : List.of("", " USDT", "USDT ", "usdt", "USD", "DOGE", "A".repeat(21))) {
             requests.add(reservationRequest(userId, UUID.randomUUID(), asset, "1"));
         }
         requests.add(reservationRequest(userId, UUID.randomUUID(), "USDT", "1")
